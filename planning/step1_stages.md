@@ -94,17 +94,31 @@ Status: done
 
 Ціль: створити структуру даних, у яку можна зберігати raw grants, normalized grants, clients, matches і reports.
 
+Перед реалізацією Stage 2 врахувати аналіз полів з `planning/fields.md`.
+Перед реалізацією Stage 2 також врахувати аналіз доступу до джерел з `planning/source_access.md`.
+
 Що зробити:
 
 - Додати SQLAlchemy models для:
   - `Source`
-  - `RawGrant`
+  - `RawGrant` або `RawGrantSnapshot`
   - `Grant`
   - `ClientProfile`
   - `ApplicationHistory`
   - `MatchRun`
   - `GrantClientMatch`
   - `Report`
+- У `Source` зберігати strategy доступу до джерела:
+  - `api`
+  - `wp_rest`
+  - `rss`
+  - `sitemap_html`
+  - `html`
+  - `browser`
+  - `manual`
+- У `Grant` не робити business fields required, окрім технічних полів, `source_url`, `title`, `status`.
+- Додати JSON fields для source-specific metadata, documents і extraction metadata.
+- Зберігати raw snapshots окремо від normalized grants.
 - Додати Alembic migrations.
 - Реалізувати database session management.
 - Додати repository/service layer для основних операцій:
@@ -171,6 +185,8 @@ Status: done
 ## Stage 4: Ingestion connectors
 
 Ціль: навчити систему збирати гранти з перших 4 джерел.
+
+Перед реалізацією Stage 4 врахувати source strategy з `planning/source_access.md`.
 
 Що зробити:
 

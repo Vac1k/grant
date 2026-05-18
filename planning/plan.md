@@ -42,19 +42,35 @@ MVP-джерела:
   - fetch timestamp
   - checksum
   - source-specific ID, якщо є
+  - raw text / raw HTML
+  - raw metadata
 
 - `Grant`
   - title
+  - summary
+  - description text
   - deadline
+  - deadline text
   - program
+  - funder
   - status
   - countries / eligibility
+  - regions / geography text
   - applicant types: SME, startup, company, NGO, consortium
   - topics: AI, defence, dual-use, innovation тощо
-  - funding amount
-  - risks / restrictions
+  - opportunity type / support type
+  - funding amount min/max/text
+  - currency
+  - restrictions
+  - cofinancing requirements
+  - consortium requirements
+  - application URL
+  - documents
   - source URL
+  - source metadata JSON
   - extraction confidence
+  - extraction metadata JSON
+  - needs manual review
 
 - `ClientProfile`
   - назва клієнта
