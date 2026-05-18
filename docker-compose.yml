@@ -1,0 +1,95 @@
+services:
+  app:
+    build: .
+    command: uvicorn grant_tool.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://grant:grant@db:5432/grant}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-AIGrantMatchingTool/0.1 (+local MVP)}
+    volumes:
+      - ./grant_tool:/app/grant_tool
+      - ./main.py:/app/main.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles:
+      - worker
+    build: .
+    command: celery -A grant_tool.celery_app.celery_app worker --loglevel=INFO
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://grant:grant@db:5432/grant}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-AIGrantMatchingTool/0.1 (+local MVP)}
+    volumes:
+      - ./grant_tool:/app/grant_tool
+      - ./main.py:/app/main.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    profiles:
+      - scheduler
+    build: .
+    command: celery -A grant_tool.celery_app.celery_app beat --loglevel=INFO
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://grant:grant@db:5432/grant}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-AIGrantMatchingTool/0.1 (+local MVP)}
+    volumes:
+      - ./grant_tool:/app/grant_tool
+      - ./main.py:/app/main.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: grant
+      POSTGRES_USER: grant
+      POSTGRES_PASSWORD: grant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grant -d grant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
