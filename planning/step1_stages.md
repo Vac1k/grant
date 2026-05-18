@@ -92,6 +92,8 @@ Status: done
 
 ## Stage 2: Data model і database layer
 
+Status: done
+
 Ціль: створити структуру даних, у яку можна зберігати raw grants, normalized grants, clients, matches і reports.
 
 Перед реалізацією Stage 2 врахувати аналіз полів з `planning/fields.md`.
@@ -135,7 +137,85 @@ Status: done
 - Повторний запуск ingestion може оновлювати існуючі записи.
 - Є основа для deduplication через URL, source ID і checksum.
 
-## Stage 3: Client profiles і application history
+Фактично зроблено:
+
+- Додано SQLAlchemy database layer у `grant_tool/db`.
+- Додано models:
+  - `Source`
+  - `RawGrantSnapshot`
+  - `Grant`
+  - `ClientProfile`
+  - `ApplicationHistory`
+  - `MatchRun`
+  - `GrantClientMatch`
+  - `Report`
+- Додано `access_strategy` для `Source`.
+- Додано JSON fields для raw payload, source metadata, extraction metadata, documents, client topics, match evidence і report metadata.
+- Додано окреме збереження raw snapshots.
+- Додано Alembic config і першу migration.
+- Додано database session management.
+- Додано repository layer для основних операцій:
+  - source upsert;
+  - raw snapshot save;
+  - grant upsert;
+  - client profile upsert;
+  - application history save;
+  - match run create;
+  - match result save/upsert;
+  - report save.
+- Оновлено Docker Compose volumes для `migrations` і `alembic.ini`.
+- Оновлено `docs/start.md` з database migration командами.
+
+Перевірено:
+
+- `poetry run python -m compileall grant_tool migrations`
+- `docker compose up --build -d`
+- `docker compose exec app alembic upgrade head`
+- `docker compose exec db psql -U grant -d grant -c "\dt"`
+- `curl http://localhost:8000/api/v1/health`
+- CRUD smoke check repository layer з rollback.
+
+## Stage 3: Ingestion connectors
+
+Ціль: навчити систему збирати гранти з перших 4 джерел.
+
+Перед реалізацією Stage 3 врахувати source strategy з `planning/source_access.md`.
+
+Що зробити:
+
+- Створити загальний interface для connector-ів:
+  - source name
+  - fetch list
+  - fetch detail, якщо потрібно
+  - normalize basic fields
+  - return raw payload/page + metadata
+- Реалізувати connector для EU Funding & Tenders Portal:
+  - використовувати API-style endpoint;
+  - не скрейпити HTML як основний шлях;
+  - зберігати source JSON у raw snapshots.
+- Реалізувати connector для Prostir:
+  - RSS для discovery;
+  - HTML detail parsing для повного тексту.
+- Реалізувати connector для GURT:
+  - HTML list/detail parsing;
+  - ізолювати parsing logic, бо джерело менш структуроване.
+- Реалізувати connector для Diia Business finance programs:
+  - sitemap/list pages для discovery;
+  - HTML detail parsing для програм фінансування.
+- Додати polite fetch behavior:
+  - user-agent
+  - timeout
+  - retry з обмеженням
+  - не робити агресивний scraping
+
+Результат етапу:
+
+- Система може зібрати список грантів із MVP-джерел.
+- Raw data зберігається перед нормалізацією.
+- Нові й оновлені гранти можна відрізняти через checksum.
+- Database schema Stage 2 перевіряється на реальних source payloads.
+
+## Stage 4: Client profiles і application history
 
 Ціль: зробити простий спосіб описувати клієнтів, проєкти та історію попередніх подач без Google Drive.
 
@@ -181,43 +261,6 @@ Status: done
 - Matching pipeline має стабільне джерело client features.
 - Matching pipeline має позитивний history signal для схожих грантів.
 - Google Drive можна додати пізніше без зміни matching logic.
-
-## Stage 4: Ingestion connectors
-
-Ціль: навчити систему збирати гранти з перших 4 джерел.
-
-Перед реалізацією Stage 4 врахувати source strategy з `planning/source_access.md`.
-
-Що зробити:
-
-- Створити загальний interface для connector-ів:
-  - source name
-  - fetch list
-  - fetch detail, якщо потрібно
-  - normalize basic fields
-  - return raw payload/page + metadata
-- Реалізувати connector для EU Funding & Tenders Portal:
-  - спочатку перевірити API-style endpoint
-  - якщо стабільного endpoint недостатньо, ізолювати fallback на structured extraction
-- Реалізувати connector для Prostir:
-  - перевірити RSS/структуровані сторінки
-  - якщо потрібно, HTML parsing
-- Реалізувати connector для GURT:
-  - аналогічно: RSS/API first, HTML parsing fallback
-- Реалізувати connector для Diia Business finance programs:
-  - зібрати програми фінансування
-  - зберігати source URL і raw payload/page
-- Додати polite fetch behavior:
-  - user-agent
-  - timeout
-  - retry з обмеженням
-  - не робити агресивний scraping
-
-Результат етапу:
-
-- Система може зібрати список грантів із MVP-джерел.
-- Raw data зберігається перед нормалізацією.
-- Нові й оновлені гранти можна відрізняти через checksum.
 
 ## Stage 5: Normalization і feature extraction
 

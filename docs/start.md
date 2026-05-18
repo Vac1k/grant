@@ -137,6 +137,26 @@ curl http://localhost:8000/api/v1/health
 {"status":"ok","service":"AI Grant Matching Tool","environment":"local"}
 ```
 
+## Database migrations
+
+Після першого запуску або після додавання нових database migrations:
+
+```bash
+docker compose exec app alembic upgrade head
+```
+
+Подивитись поточну Alembic revision:
+
+```bash
+docker compose exec app alembic current
+```
+
+Подивитись таблиці в PostgreSQL:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "\dt"
+```
+
 ## OpenAPI docs
 
 FastAPI автоматично генерує API документацію.
