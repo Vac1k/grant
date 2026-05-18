@@ -1,0 +1,16 @@
+[project]
+name = "ai-replace-grandwriters"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "studonysvo1862",email = "volodymyr.onyshchenko@stud.th-rosenheim.de"}
+]
+readme = "README.md"
+requires-python = "^3.14"
+dependencies = [
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
