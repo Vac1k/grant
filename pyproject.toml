@@ -1,16 +1,36 @@
 [project]
 name = "ai-replace-grandwriters"
 version = "0.1.0"
-description = ""
+description = "AI grant matching tool MVP"
 authors = [
     {name = "studonysvo1862",email = "volodymyr.onyshchenko@stud.th-rosenheim.de"}
 ]
 readme = "README.md"
-requires-python = "^3.14"
+requires-python = ">=3.12,<4.0"
 dependencies = [
+    "alembic>=1.13.0,<2.0.0",
+    "beautifulsoup4>=4.12.0,<5.0.0",
+    "celery>=5.4.0,<6.0.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "jinja2>=3.1.0,<4.0.0",
+    "pgvector>=0.3.0,<1.0.0",
+    "psycopg[binary]>=3.2.0,<4.0.0",
+    "pydantic>=2.8.0,<3.0.0",
+    "pydantic-settings>=2.4.0,<3.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "pyyaml>=6.0.0,<7.0.0",
+    "redis>=5.0.0,<6.0.0",
+    "sqlalchemy>=2.0.0,<3.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
 ]
 
+[project.scripts]
+grant-tool = "grant_tool.cli:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "grant_tool"}]
