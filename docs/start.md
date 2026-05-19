@@ -29,10 +29,25 @@ cd /Users/vac1k/Projects/ai_replace_grandwriters/grant
 cp .env.example .env
 ```
 
-Запустити app, database і Redis:
+Запустити весь local stack:
 
 ```bash
 docker compose up --build
+```
+
+Під час запуску Docker Compose також запускає одноразовий service `migrate`.
+Він автоматично виконує:
+
+```bash
+alembic upgrade head
+grant-tool seed-sources
+```
+
+Тобто на чистій базі не треба окремо запускати migrations або seed MVP sources.
+Після першого build наступні щоденні запуски можна робити коротшою командою:
+
+```bash
+docker compose up
 ```
 
 Після запуску app буде доступний тут:
@@ -67,6 +82,7 @@ docker compose --profile worker --profile scheduler up --build
 
 Ця команда запускає:
 
+- `migrate`
 - `app`
 - `db`
 - `redis`
@@ -80,6 +96,9 @@ docker compose --profile worker --profile scheduler up --build
 ```bash
 docker compose down
 ```
+
+`docker compose down` зупиняє і видаляє containers/network, але не видаляє PostgreSQL data volume.
+Дані в database залишаються, бо вони зберігаються у named volume `postgres_data`.
 
 Зупинити services і видалити volumes з database data:
 
@@ -139,7 +158,9 @@ curl http://localhost:8000/api/v1/health
 
 ## Database migrations
 
-Після першого запуску або після додавання нових database migrations:
+Звичайно migrations запускати вручну не треба: service `migrate` робить це під час `docker compose up`.
+
+Якщо треба вручну повторно застосувати migrations:
 
 ```bash
 docker compose exec app alembic upgrade head
@@ -188,6 +209,13 @@ poetry run uvicorn grant_tool.main:app --reload
 - port `8000`
 - команда всередині container: `uvicorn grant_tool.main:app --host 0.0.0.0 --port 8000 --reload`
 
+`migrate`:
+
+- одноразовий startup service
+- запускається перед `app`, `worker` і `beat`
+- команда всередині container: `alembic upgrade head && grant-tool seed-sources`
+- завершується після успішної міграції і seed MVP sources
+
 `db`:
 
 - PostgreSQL 16
@@ -220,3 +248,5 @@ poetry run uvicorn grant_tool.main:app --reload
 - Нові runtime services треба додавати в `docker-compose.yml`.
 - README має бути коротким, а детальні команди мають жити в `docs/start.md`.
 - `.env` використовується Docker Compose для environment variables, але не має копіюватись у Docker image або монтуватись у app container.
+- `docker compose down` не видаляє database data.
+- `docker compose down -v` видаляє database data і використовується тільки коли треба повністю скинути локальну базу.

@@ -1,4 +1,24 @@
 services:
+  migrate:
+    build: .
+    command: sh -c "alembic upgrade head && grant-tool seed-sources"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://grant:grant@db:5432/grant}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      HTTP_USER_AGENT: ${HTTP_USER_AGENT:-AIGrantMatchingTool/0.1 (+local MVP)}
+    volumes:
+      - ./grant_tool:/app/grant_tool
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./main.py:/app/main.py
+    depends_on:
+      db:
+        condition: service_healthy
+
   app:
     build: .
     command: uvicorn grant_tool.main:app --host 0.0.0.0 --port 8000 --reload
@@ -18,8 +38,8 @@ services:
       - ./alembic.ini:/app/alembic.ini
       - ./main.py:/app/main.py
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -42,8 +62,8 @@ services:
       - ./alembic.ini:/app/alembic.ini
       - ./main.py:/app/main.py
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -66,8 +86,8 @@ services:
       - ./alembic.ini:/app/alembic.ini
       - ./main.py:/app/main.py
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

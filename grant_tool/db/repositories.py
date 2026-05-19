@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
@@ -13,6 +15,9 @@ from grant_tool.db.models import (
     ClientProfile,
     Grant,
     GrantClientMatch,
+    JobRun,
+    JobStatus,
+    JobType,
     MatchRun,
     RawGrantSnapshot,
     Report,
@@ -20,9 +25,31 @@ from grant_tool.db.models import (
 )
 
 
+def _enum_value(value: str | StrEnum) -> str:
+    if isinstance(value, StrEnum):
+        return value.value
+    return value
+
+
+def _merge_metadata(
+    current: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {**(current or {}), **(extra or {})}
+
+
 class GrantRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def get_source_by_slug(self, slug: str) -> Source | None:
+        return self.session.scalar(select(Source).where(Source.slug == slug))
+
+    def list_sources(self, *, enabled_only: bool = False) -> list[Source]:
+        query = select(Source).order_by(Source.slug)
+        if enabled_only:
+            query = query.where(Source.enabled.is_(True))
+        return list(self.session.scalars(query))
 
     def upsert_source(
         self,
@@ -45,7 +72,7 @@ class GrantRepository:
         values = {
             "name": name,
             "base_url": base_url,
-            "access_strategy": str(access_strategy),
+            "access_strategy": _enum_value(access_strategy),
             "list_url": list_url,
             "api_url": api_url,
             "feed_url": feed_url,
@@ -66,6 +93,100 @@ class GrantRepository:
 
         self.session.flush()
         return source
+
+    def start_job(
+        self,
+        *,
+        job_type: str | JobType,
+        source_id: uuid.UUID | None = None,
+        status: str | JobStatus = JobStatus.RUNNING,
+        job_metadata: dict[str, Any] | None = None,
+    ) -> JobRun:
+        job = JobRun(
+            job_type=_enum_value(job_type),
+            source_id=source_id,
+            status=_enum_value(status),
+            job_metadata=job_metadata or {},
+        )
+        self.session.add(job)
+        self.session.flush()
+        return job
+
+    def get_job(self, job_id: uuid.UUID) -> JobRun | None:
+        return self.session.get(JobRun, job_id)
+
+    def list_jobs(
+        self,
+        *,
+        limit: int = 20,
+        job_type: str | JobType | None = None,
+        source_id: uuid.UUID | None = None,
+    ) -> list[JobRun]:
+        query = select(JobRun).order_by(JobRun.started_at.desc())
+        if job_type is not None:
+            query = query.where(JobRun.job_type == _enum_value(job_type))
+        if source_id is not None:
+            query = query.where(JobRun.source_id == source_id)
+        return list(self.session.scalars(query.limit(limit)))
+
+    def increment_job_counters(
+        self,
+        job: JobRun,
+        *,
+        processed: int = 0,
+        created: int = 0,
+        updated: int = 0,
+        skipped: int = 0,
+        failed: int = 0,
+    ) -> JobRun:
+        job.processed_count += processed
+        job.created_count += created
+        job.updated_count += updated
+        job.skipped_count += skipped
+        job.failed_count += failed
+        self.session.flush()
+        return job
+
+    def finish_job_success(
+        self,
+        job: JobRun,
+        *,
+        job_metadata: dict[str, Any] | None = None,
+    ) -> JobRun:
+        job.status = JobStatus.SUCCESS.value
+        job.finished_at = datetime.now(UTC)
+        job.error_message = None
+        job.job_metadata = _merge_metadata(job.job_metadata, job_metadata)
+        self.session.flush()
+        return job
+
+    def finish_job_failed(
+        self,
+        job: JobRun,
+        *,
+        error_message: str,
+        job_metadata: dict[str, Any] | None = None,
+    ) -> JobRun:
+        job.status = JobStatus.FAILED.value
+        job.finished_at = datetime.now(UTC)
+        job.error_message = error_message
+        job.job_metadata = _merge_metadata(job.job_metadata, job_metadata)
+        self.session.flush()
+        return job
+
+    def mark_job_partial(
+        self,
+        job: JobRun,
+        *,
+        error_message: str | None = None,
+        job_metadata: dict[str, Any] | None = None,
+    ) -> JobRun:
+        job.status = JobStatus.PARTIAL.value
+        job.finished_at = datetime.now(UTC)
+        job.error_message = error_message
+        job.job_metadata = _merge_metadata(job.job_metadata, job_metadata)
+        self.session.flush()
+        return job
 
     def save_raw_snapshot(
         self,

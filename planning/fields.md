@@ -362,6 +362,8 @@ Raw data треба зберігати завжди.
 
 `JobRun` не є grant business entity, але потрібен перед Stage 3, щоб ingestion був контрольованим.
 
+Статус реалізації: done. `JobRun` реалізовано окремою migration `20260519_0002_create_job_runs.py`, а MVP source seed запускається автоматично через Docker Compose service `migrate`.
+
 У `job_runs` варто зберігати:
 
 - `id`

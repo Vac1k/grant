@@ -13,4 +13,6 @@ RUN pip install "poetry>=2.0,<3.0" \
 
 COPY . .
 
+RUN pip install --no-deps -e .
+
 CMD ["uvicorn", "grant_tool.main:app", "--host", "0.0.0.0", "--port", "8000"]

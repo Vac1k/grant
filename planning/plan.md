@@ -24,7 +24,7 @@ MVP-джерела:
   - `FastAPI` backend
   - dashboard через `Jinja2` + легкі HTMX-взаємодії
   - `PostgreSQL` + `pgvector`
-  - Docker Compose для app, database, worker і scheduler
+  - Docker Compose для app, database, Redis, one-shot migrate service, worker і scheduler
   - змінити Python target з `^3.14` на стабільний `^3.12`, якщо немає причини залишати 3.14
 
 ## Data Model
@@ -254,6 +254,13 @@ MVP-джерела:
 
 ## Automation
 
+- Docker Compose startup має бути one-command:
+  - `docker compose up --build` будує image і запускає весь local stack;
+  - `docker compose up` запускає вже зібраний local stack;
+  - одноразовий `migrate` service виконує `alembic upgrade head && grant-tool seed-sources`;
+  - `app`, `worker` і `beat` стартують тільки після успішного `migrate`.
+- `docker compose down` зупиняє services, але не видаляє database data.
+- `docker compose down -v` видаляє PostgreSQL volume і використовується тільки для повного reset локальної бази.
 - Scheduler запускає ingestion кожні 6-12 годин.
 - Окремий daily job генерує report раз на день.
 - Jobs мають бути idempotent.
@@ -262,7 +269,7 @@ MVP-джерела:
 ## Assumptions
 
 - MVP запускається локально через Docker Compose.
-- Docker Compose є основним способом запуску app під час розробки: `docker compose up --build`.
+- Docker Compose є основним способом запуску app під час розробки: `docker compose up --build` або `docker compose up`.
 - У документації мають бути описані прямі Docker Compose команди для запуску, зупинки, logs і status.
 - Authentication у першій версії не потрібна.
 - Google Drive інтеграція відкладається до наступного етапу.

@@ -138,6 +138,8 @@ Public API швидко не знайшовся.
 
 Перед реальним ingestion треба додати `JobRun` і seed для MVP sources.
 
+Статус реалізації: done. `JobRun`, MVP source seed і Docker Compose `migrate` startup service вже реалізовані.
+
 `JobRun` потрібен для:
 
 - історії запусків ingestion;

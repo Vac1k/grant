@@ -36,6 +36,25 @@ class AccessStrategy(StrEnum):
     MANUAL = "manual"
 
 
+class JobType(StrEnum):
+    INGESTION = "ingestion"
+    IMPORT_CLIENTS = "import_clients"
+    IMPORT_HISTORY = "import_history"
+    MATCHING = "matching"
+    LLM_EXTRACTION = "llm_extraction"
+    EMBEDDING = "embedding"
+    REPORT = "report"
+    SEED_SOURCES = "seed_sources"
+
+
+class JobStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    PARTIAL = "partial"
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -84,6 +103,42 @@ class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     grants: Mapped[list[Grant]] = relationship(back_populates="source")
+    job_runs: Mapped[list[JobRun]] = relationship(back_populates="source")
+
+
+class JobRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "job_runs"
+    __table_args__ = (
+        Index("ix_job_runs_job_type_status", "job_type", "status"),
+        Index("ix_job_runs_started_at", "started_at"),
+    )
+
+    job_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sources.id", ondelete="SET NULL"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default=JobStatus.PENDING.value,
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    job_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    source: Mapped[Source | None] = relationship(back_populates="job_runs")
 
 
 class RawGrantSnapshot(UUIDPrimaryKeyMixin, Base):

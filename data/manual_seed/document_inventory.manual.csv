@@ -1,0 +1,19 @@
+client_name,file_path,document_type,usable_for_matching,contains_sensitive_data,summary,extraction_priority
+10guards,grant/initial_grants/10guards/Oh-My-Grant-x-10guards-3eb5b625-da75.docx,meeting_notes,yes,no,"Cybersecurity grant strategy, Horizon-style consortium requirements, AI/security product directions, cofinancing and partner risks.",high
+10guards,grant/initial_grants/10guards/photo_2025-07-15_22-28-34.jpg,identity_or_tax_document,no,yes,"Image of personal/tax identification document. Should not be used for grant matching.",skip
+10guards,grant/initial_grants/10guards/Витяг з ЄДР (2).pdf,legal_registry_document,limited,yes,"Company/registry extract. May be useful for KYC/admin only, not for matching profile extraction.",skip
+IS Academy,grant/initial_grants/IS Academy/IS-Academy-Oh-My-Grant-219b8275-a22d.docx,feedback_and_strategy,yes,no,"Grant feedback, score/competition context, future monitoring and application improvement notes.",high
+IS Academy,grant/initial_grants/IS Academy/З Q&A міту.docx,qa_transcript,yes,no,"Q&A transcript with product, TRL, psychometrics, AI, team, market, IP, KPI and work-package details.",high
+Intelswift,grant/initial_grants/Intelswift/ВСЯ ВХІДНА ІНФОРМАЦІЯ.docx,qa_transcript,yes,no,"Large transcript for Voice AI project, technology, market, latency, security and grant positioning.",high
+Intelswift,grant/initial_grants/Intelswift/З Q&A міту_.docx,qa_transcript,yes,no,"Q&A meeting transcript, overlaps with main input information file.",medium
+Intelswift,grant/initial_grants/Intelswift/З Q&A міту_2.docx,qa_transcript,yes,no,"Follow-up Q&A meeting transcript with additional implementation/KPI details.",medium
+Intelswift,grant/initial_grants/Intelswift/Концепти.docx,concept_note,yes,no,"FFplus EuroGuard-HPC and Foresight AI-safety concept framing.",high
+Intelswift,grant/initial_grants/Intelswift/Питання для доопрацювання.docx,questions_for_client,yes,no,"Structured questions for missing technical, budget and grant-fit information.",medium
+Intelswift,grant/initial_grants/Intelswift/Питання на міт.docx,evaluation_memo,yes,no,"Grant-fit assessment, scoring expectations, recommendations and question list.",high
+Versi Bionics,grant/initial_grants/Versi Bionics/Start-up_EDGE_позиціювання.docx,positioning,yes,no,"Structured DeepTech MedTech positioning, problem/solution, market and technology framing.",high
+Versi Bionics,grant/initial_grants/Versi Bionics/Versi-Bionics-Oh-My-Grant-d6575765-b39f.docx,feedback_and_strategy,yes,no,"Prior grant score, evaluator feedback, future application strategy and IP/market/AI gaps.",high
+Versi Bionics,grant/initial_grants/Versi Bionics/Versi-Bionics-x-OMG-USF-f73fa1b9-6e0e.docx,meeting_notes,yes,no,"Seed grant budget, equipment, team, video and application preparation notes.",high
+Versi Bionics,grant/initial_grants/Versi Bionics/Versi-X-OMG-374fbc50-1e2f.docx,grant_strategy,yes,no,"Grant opportunity review: ESF Seed, AAC accelerator, EIT Health and future monitoring.",high
+Versi Bionics,grant/initial_grants/Versi Bionics/Питання для доопрацювання.docx,questions_for_client,yes,no,"Technical Q&A template and initial answers for AI/ML use, budget and work packages.",medium
+Vignette ID,grant/initial_grants/Vignette ID/Ffplus for VignetteID.docx,concept_note,yes,no,"FFplus concept for AI Fine Resolution Engine and HPC-customized multilingual legal document processing.",high
+Vignette ID,grant/initial_grants/Vignette ID/GLOVO Startup Lab 4.0_.docx,application_draft,yes,limited,"Structured Glovo application answers with product, traction, business model and contact data.",high

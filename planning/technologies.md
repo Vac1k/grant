@@ -22,7 +22,8 @@
 
 ## Local development workflow
 
-- Основний запуск: `docker compose up --build`
+- Основний перший запуск або запуск після Docker/dependency змін: `docker compose up --build`
+- Звичайний щоденний запуск: `docker compose up`
 - Повний запуск з worker і scheduler: `docker compose --profile worker --profile scheduler up --build`
 - Зупинка services: `docker compose down`
 - Перегляд logs: `docker compose logs -f`
@@ -31,6 +32,11 @@
 Правило:
 
 - Усі основні runtime dependencies мають запускатись через Docker Compose.
+- `docker compose up` має самостійно підняти database, Redis, застосувати migrations, seed MVP sources і запустити app.
+- Для цього використовується one-shot service `migrate`, який виконує `alembic upgrade head && grant-tool seed-sources`.
+- `app`, `worker` і `beat` залежать від успішного завершення `migrate`.
+- `docker compose down` не видаляє PostgreSQL data volume.
+- `docker compose down -v` видаляє PostgreSQL data volume і використовується тільки для повного reset локальної бази.
 - Локальний запуск через `poetry run uvicorn ...` дозволений тільки для точкового debugging.
 - Якщо додається новий runtime service, його треба додати в `docker-compose.yml` і описати в документації.
 
@@ -47,6 +53,8 @@
 - `PostgreSQL + pgvector` використовується і для structured data, і для embeddings.
 - `SQLAlchemy 2 + Alembic` дає контрольовану schema evolution.
 - Auto-create tables on startup не використовується як основний підхід.
+- Migrations застосовує `migrate` service під час Docker Compose startup.
+- Ручний fallback для migrations: `docker compose exec app alembic upgrade head`.
 
 ## Background jobs і automation
 

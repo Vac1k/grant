@@ -19,6 +19,27 @@ The first version uses local structured files for client data:
 - separate `CSV` application history
 - Google Drive integration is deferred to a later stage
 
+## Local Start
+
+The normal local workflow is one Docker Compose command:
+
+```bash
+docker compose up --build
+```
+
+Compose starts PostgreSQL, Redis, a one-shot `migrate` service, and the FastAPI app.
+The `migrate` service runs database migrations and seeds the MVP sources:
+
+```bash
+alembic upgrade head
+grant-tool seed-sources
+```
+
+Use `docker compose down` to stop containers without deleting database data.
+Use `docker compose down -v` only when you want to delete the local PostgreSQL volume.
+
+Detailed commands live in [`docs/start.md`](docs/start.md).
+
 ## Core Logic
 
 The system follows this flow:
