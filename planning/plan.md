@@ -45,6 +45,16 @@ MVP-джерела:
   - raw text / raw HTML
   - raw metadata
 
+- `JobRun`
+  - операційний запис запуску ingestion/import/matching/report job
+  - job type
+  - source, якщо job source-specific
+  - status: pending, running, success, failed, partial
+  - started/finished timestamps
+  - processed/created/updated/skipped/failed counters
+  - error message
+  - job metadata JSON
+
 - `Grant`
   - title
   - summary
@@ -112,6 +122,22 @@ MVP-джерела:
 
 ## Ingestion Pipeline
 
+- Перед конкретними source connectors додати shared connector framework:
+  - `BaseConnector`
+  - `FetchedGrant`
+  - `FetchedDetail`
+  - `NormalizedGrantDraft`
+  - `ConnectorResult`
+  - shared HTTP client з user-agent, timeout, limited retries і rate limit
+  - content hashing для raw snapshots
+  - common ingestion service, який зберігає raw data перед normalized upsert
+- Перед першим ingestion додати source seeding для MVP sources:
+  - EU Funding & Tenders Portal
+  - Prostir grants
+  - GURT grants
+  - Diia Business finance programs
+- Кожен ingestion запуск створює `JobRun` і оновлює counters/status.
+- Якщо один grant/detail page падає, connector не має ламати весь ingestion job.
 - Для EU Funding & Tenders Portal спочатку перевірити можливість роботи через офіційний/API-style доступ.
 - Якщо стабільного публічного API недостатньо, ізолювати EU connector і зробити fallback на контрольоване structured extraction зі сторінок пошуку/details.
 - Для Prostir, GURT і Diia:
@@ -120,6 +146,12 @@ MVP-джерела:
 - Кожен fetch має зберігати raw data перед нормалізацією.
 - Дедуплікація через source URL, source ID і checksum.
 - Повторний запуск ingestion не має створювати дублікати.
+- Реалізовувати MVP connectors по черзі:
+  - спочатку EU Funding API connector;
+  - потім Prostir RSS + detail HTML connector;
+  - потім Diia Business sitemap/list + detail HTML connector;
+  - потім GURT HTML list/detail connector.
+- Для кожного connector додати fixture-based parser tests без обов'язкового live internet.
 
 ## Feature Extraction
 

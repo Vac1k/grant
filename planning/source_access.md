@@ -134,6 +134,61 @@ Public API швидко не знайшовся.
 
 Це дозволяє мати один database design для API-джерел і для HTML-джерел.
 
+## Вплив на Stage 2.5
+
+Перед реальним ingestion треба додати `JobRun` і seed для MVP sources.
+
+`JobRun` потрібен для:
+
+- історії запусків ingestion;
+- статусу по кожному source;
+- counters для processed/created/updated/skipped/failed records;
+- збереження помилок connector-а без падіння всієї системи;
+- dashboard visibility для crawler-а.
+
+Seed sources має створити records для:
+
+- `eu-funding`
+- `prostir`
+- `gurt`
+- `diia-business`
+
+Кожен seeded source має одразу містити:
+
+- `base_url`
+- `api_url`, `feed_url`, `list_url` або `sitemap_url`, якщо відомо;
+- `access_strategy`;
+- `rate_limit_seconds`;
+- `requires_browser`;
+- короткі `notes` про доступ.
+
+## Вплив на Stage 3
+
+Stage 3 треба починати не з конкретного source, а з connector framework.
+
+Спільний framework має включати:
+
+- `BaseConnector`;
+- typed objects для fetched list item, fetched detail і normalized grant draft;
+- shared `httpx` client з user-agent, timeout, retries і rate limit;
+- content hashing для raw snapshots;
+- ingestion service, який створює `JobRun`, зберігає raw snapshots і робить normalized grant upsert;
+- fixture-based parser tests без обов'язкового live internet.
+
+Порядок реалізації MVP connectors:
+
+1. EU Funding & Tenders Portal через API.
+2. Prostir через RSS discovery + HTML detail parsing.
+3. Diia Business через sitemap/list + HTML detail parsing.
+4. GURT через HTML list/detail parsing.
+
+Причина такого порядку:
+
+- EU Funding є найструктурованішим source і найкраще перевіряє database schema.
+- Prostir дає перше українське джерело з RSS discovery.
+- Diia Business додає business support/finance programmes, не тільки класичні grants.
+- GURT менш структурований, тому його краще додавати після стабілізації parser framework.
+
 ## Вплив на поля grant
 
 Не всі сайти дають однакову структуру, тому required fields мають бути мінімальними:

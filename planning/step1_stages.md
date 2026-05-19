@@ -175,38 +175,251 @@ Status: done
 - `curl http://localhost:8000/api/v1/health`
 - CRUD smoke check repository layer з rollback.
 
-## Stage 3: Ingestion connectors
+## Stage 2.5: Job tracking і source seeding
+
+Status: planned
+
+Ціль: додати операційний контроль перед реальним ingestion, щоб кожен запуск збору, імпорту, matching або report generation мав статус, лічильники і помилки.
+
+Чому це потрібно:
+
+- Ingestion буде працювати з нестабільними зовнішніми сайтами.
+- Один source може впасти, але вся система не має ламатись.
+- Потрібно бачити, коли джерело востаннє успішно оновлювалось.
+- Повторний запуск має бути безпечним і зрозумілим.
+- Dashboard має показувати не тільки grants, а й стан pipeline.
+
+Що зробити:
+
+- Додати SQLAlchemy model `JobRun`.
+- Додати Alembic migration для `job_runs`.
+- Поля `JobRun`:
+  - `id`
+  - `job_type`: `ingestion`, `import_clients`, `import_history`, `matching`, `llm_extraction`, `embedding`, `report`, `seed_sources`
+  - `source_id`, якщо job прив'язаний до конкретного source
+  - `status`: `pending`, `running`, `success`, `failed`, `partial`
+  - `started_at`
+  - `finished_at`
+  - `processed_count`
+  - `created_count`
+  - `updated_count`
+  - `skipped_count`
+  - `failed_count`
+  - `error_message`
+  - `job_metadata`
+- Додати repository/service methods:
+  - `start_job`
+  - `finish_job_success`
+  - `finish_job_failed`
+  - `mark_job_partial`
+  - `increment_job_counters`
+- Додати seed для MVP sources:
+  - EU Funding & Tenders Portal
+  - Prostir grants
+  - GURT grants
+  - Diia Business finance programs
+- Додати CLI commands:
+  - `grant-tool seed-sources`
+  - `grant-tool jobs list`
+  - `grant-tool jobs show <job_id>`
+- Додати базові тести:
+  - створення job;
+  - success/failure завершення;
+  - idempotent source seed;
+  - counters update.
+
+Результат етапу:
+
+- Перед Stage 3 у системі вже є записи source-ів.
+- Кожен ingestion запуск має audit trail.
+- Помилки connector-ів можна бачити в database/dashboard.
+- Stage 10 automation пізніше буде використовувати той самий `JobRun`, а не окремий механізм.
+
+## Stage 3: Ingestion connector framework і MVP connectors
+
+Status: planned
 
 Ціль: навчити систему збирати гранти з перших 4 джерел.
 
 Перед реалізацією Stage 3 врахувати source strategy з `planning/source_access.md`.
 
+Stage 3 не треба реалізовувати як чотири окремі хаотичні scripts. Спочатку потрібно зробити спільний connector framework, а потім підключати джерела по одному.
+
+### Stage 3.0: Connector framework
+
+Ціль: створити однаковий контракт для всіх джерел.
+
 Що зробити:
 
 - Створити загальний interface для connector-ів:
-  - source name
-  - fetch list
-  - fetch detail, якщо потрібно
-  - normalize basic fields
-  - return raw payload/page + metadata
+  - `source_slug`
+  - `fetch_list`
+  - `fetch_detail`, якщо потрібно
+  - `parse_list`
+  - `parse_detail`
+  - `normalize_basic_fields`
+  - `run`
+- Додати shared data objects:
+  - `FetchedGrant`
+  - `FetchedDetail`
+  - `NormalizedGrantDraft`
+  - `ConnectorResult`
+  - `ConnectorError`
+- Додати shared HTTP client:
+  - `httpx`
+  - configured user-agent з `HTTP_USER_AGENT`
+  - timeout
+  - limited retries
+  - per-source rate limit
+  - content-type збереження
+  - HTTP status збереження
+- Додати content hashing:
+  - hash raw JSON для API sources;
+  - hash raw HTML/text для HTML sources;
+  - hash має використовуватись для `RawGrantSnapshot.content_hash`.
+- Додати ingestion service:
+  - завантажити `Source` з database;
+  - запустити connector;
+  - зберегти raw snapshot до normalization;
+  - upsert normalized grant;
+  - оновити `JobRun` counters;
+  - не падати всім job через одну помилку detail page.
+- Додати CLI commands:
+  - `grant-tool ingest --source eu-funding`
+  - `grant-tool ingest --source prostir`
+  - `grant-tool ingest --source diia-business`
+  - `grant-tool ingest --source gurt`
+  - `grant-tool ingest --all`
+- Додати fixture-based tests:
+  - parser tests мають працювати без internet;
+  - fixtures зберігати у `tests/fixtures/<source>/`;
+  - live network tests не мають бути обов'язковими для звичайного test run.
+
+Результат Stage 3.0:
+
+- Є один ingestion pattern для всіх джерел.
+- Новий source можна додати без зміни core ingestion service.
+- Реальні connectors мають однакові counters, error handling і raw snapshot behavior.
+
+### Stage 3.1: EU Funding & Tenders Portal connector
+
+Ціль: першим реалізувати найбільш структуроване джерело.
+
+Що зробити:
+
 - Реалізувати connector для EU Funding & Tenders Portal:
   - використовувати API-style endpoint;
   - не скрейпити HTML як основний шлях;
   - зберігати source JSON у raw snapshots.
+  - нормалізувати:
+    - source record id / topic id
+    - title
+    - status
+    - call/program
+    - description/summary
+    - opening date
+    - deadline dates
+    - keywords/topics, якщо доступні
+    - budget/funding text, якщо доступний
+    - source URL
+- Додати fixture JSON response і parser tests.
+
+Результат Stage 3.1:
+
+- Database schema перевірена на структурованому API source.
+- Можна запускати перший реальний ingestion job.
+
+### Stage 3.2: Prostir connector
+
+Ціль: реалізувати українське джерело з RSS discovery і HTML detail extraction.
+
+Що зробити:
+
 - Реалізувати connector для Prostir:
   - RSS для discovery;
   - HTML detail parsing для повного тексту.
-- Реалізувати connector для GURT:
-  - HTML list/detail parsing;
-  - ізолювати parsing logic, бо джерело менш структуроване.
+  - з RSS брати:
+    - title
+    - source URL
+    - publication date
+    - summary/excerpt
+  - з detail HTML брати:
+    - full text
+    - deadline text/date, якщо можна визначити deterministic parsing
+    - documents/links
+    - contact/application instructions, якщо доступні
+- Додати fixture RSS і detail HTML.
+- Додати parser tests для RSS і detail HTML.
+
+Результат Stage 3.2:
+
+- MVP має перше українське джерело.
+- Raw HTML/text зберігається для Stage 5 LLM extraction.
+
+### Stage 3.3: Diia Business finance programs connector
+
+Ціль: додати джерело business support programs, яке не завжди є класичним grant source.
+
+Що зробити:
+
 - Реалізувати connector для Diia Business finance programs:
   - sitemap/list pages для discovery;
   - HTML detail parsing для програм фінансування.
+  - розрізняти `opportunity_type` і `support_type`;
+  - зберігати finance programme metadata у `source_metadata`.
+- Нормалізувати, якщо доступно:
+  - title
+  - provider/institution
+  - support type
+  - amount/funding text
+  - target audience
+  - conditions
+  - external application URL
+- Додати fixture sitemap/list HTML і detail HTML.
+- Додати parser tests.
+
+Результат Stage 3.3:
+
+- Система покриває не тільки grants, а й finance/support programmes для українських компаній.
+
+### Stage 3.4: GURT connector
+
+Ціль: додати менш структуроване українське джерело після стабілізації framework на простіших sources.
+
+Що зробити:
+
+- Реалізувати connector для GURT:
+  - HTML list/detail parsing;
+  - ізолювати parsing logic, бо джерело менш структуроване.
+  - робити conservative requests;
+  - зберігати full raw text для подальшої LLM extraction;
+  - не вимагати deadline/amount/funder як required fields.
+- Додати fixture list HTML і detail HTML.
+- Додати parser tests.
+
+Результат Stage 3.4:
+
+- Система має всі 4 MVP sources.
+- Неструктуровані джерела не ламають normalized schema.
+
+### Загальні правила Stage 3
+
 - Додати polite fetch behavior:
   - user-agent
   - timeout
   - retry з обмеженням
   - не робити агресивний scraping
+- Кожен connector має:
+  - зберігати raw data перед normalized upsert;
+  - повертати stable source URL;
+  - повертати source-specific ID, якщо є;
+  - рахувати processed/created/updated/skipped/failed;
+  - не створювати дублікати при повторному запуску;
+  - логувати source-specific parser warnings.
+- Якщо detail page не завантажилась:
+  - list item все одно можна зберегти як partial grant;
+  - job може завершитись `partial`, а не `failed`;
+  - error має бути в `JobRun.job_metadata` або logs.
 
 Результат етапу:
 
@@ -214,6 +427,8 @@ Status: done
 - Raw data зберігається перед нормалізацією.
 - Нові й оновлені гранти можна відрізняти через checksum.
 - Database schema Stage 2 перевіряється на реальних source payloads.
+- Кожен ingestion запуск видно через `JobRun`.
+- Connector framework готовий для post-MVP sources.
 
 ## Stage 4: Client profiles і application history
 

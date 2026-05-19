@@ -357,3 +357,36 @@ Raw data треба зберігати завжди.
 - `updated_at`
 
 Все інше має бути nullable або мати safe default.
+
+## Додаткова рекомендація для Stage 2.5
+
+`JobRun` не є grant business entity, але потрібен перед Stage 3, щоб ingestion був контрольованим.
+
+У `job_runs` варто зберігати:
+
+- `id`
+- `job_type`
+- `source_id`, nullable
+- `status`
+- `started_at`
+- `finished_at`
+- `processed_count`
+- `created_count`
+- `updated_count`
+- `skipped_count`
+- `failed_count`
+- `error_message`
+- `job_metadata`
+
+`JobRun` має покривати не тільки scheduled jobs, а й ручні CLI-запуски:
+
+- source seeding;
+- ingestion;
+- client import;
+- application history import;
+- matching;
+- LLM extraction;
+- embedding generation;
+- report generation.
+
+Це дозволить Stage 3 connectors повертати зрозумілий результат: що було оброблено, що створено, що оновлено і де сталася помилка.

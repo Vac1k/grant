@@ -56,15 +56,36 @@
 
 Jobs для MVP:
 
+- seed sources
 - ingestion кожні 6-12 годин
 - reload client profiles
 - reload application history
 - run matching
+- run LLM extraction для нових або incomplete grants
+- generate embeddings або regenerate changed embeddings
 - generate daily report
+
+Job status зберігається в database через `JobRun`.
+
+`JobRun` має покривати:
+
+- `job_type`
+- `source_id`, якщо job source-specific
+- `status`: `pending`, `running`, `success`, `failed`, `partial`
+- `started_at`
+- `finished_at`
+- `processed_count`
+- `created_count`
+- `updated_count`
+- `skipped_count`
+- `failed_count`
+- `error_message`
+- `job_metadata`
 
 Пояснення:
 
 - `Celery + Redis` складніші за простий scheduler, але краще підходять для довгих ingestion tasks, retries і job visibility.
+- `JobRun` потрібен не тільки для Celery: ручні CLI-запуски ingestion/import/matching також мають створювати job history.
 
 ## Grant fetching і connectors
 
@@ -72,6 +93,7 @@ Jobs для MVP:
 - Default parsing: `BeautifulSoup`
 - Browser automation: `Playwright` тільки якщо конкретне джерело неможливо стабільно обробити через `httpx`
 - Crawler policy: conservative polite crawler
+- Connector architecture: shared connector framework + source-specific implementations
 
 Правила crawler-а:
 
@@ -83,12 +105,49 @@ Jobs для MVP:
 - no paywall bypass
 - no aggressive scraping
 
+Connector framework:
+
+- `BaseConnector`
+- `FetchedGrant`
+- `FetchedDetail`
+- `NormalizedGrantDraft`
+- `ConnectorResult`
+- `ConnectorError`
+- shared `HttpClient`
+- shared content hashing
+- shared ingestion service для raw snapshot save + normalized grant upsert
+
+Мінімальний connector contract:
+
+- `source_slug`
+- `fetch_list`
+- `parse_list`
+- `fetch_detail`, якщо source потребує detail pages
+- `parse_detail`, якщо source потребує detail pages
+- `normalize_basic_fields`
+- `run`
+
+Порядок реалізації MVP connectors:
+
+- EU Funding & Tenders Portal через API-style endpoint
+- Prostir через RSS discovery + HTML detail parsing
+- Diia Business через sitemap/list + HTML detail parsing
+- GURT через HTML list/detail parsing
+
+Testing policy для connectors:
+
+- parser tests працюють на local fixtures;
+- fixtures зберігаються у `tests/fixtures/<source>/`;
+- звичайний test run не залежить від live internet;
+- live smoke checks можуть бути окремими manual/dev commands.
+
 Пояснення:
 
 - Спочатку для кожного джерела треба зробити technical discovery.
 - Якщо сайт має API, RSS або structured endpoint, використовувати його.
 - Якщо сторінки server-rendered, використовувати `httpx + BeautifulSoup`.
 - Якщо сайт JS-heavy, додавати source-specific `Playwright` fallback.
+- Framework потрібен, щоб post-MVP sources додавались як modules, а не як окремі one-off scripts.
 
 ## AI і embeddings
 
@@ -250,13 +309,19 @@ Job status має показувати:
 - status
 - started_at
 - finished_at
+- processed_count
+- created_count
+- updated_count
+- skipped_count
+- failed_count
 - error message
-- number of processed records
+- source-specific metadata або parser warnings
 
 Пояснення:
 
 - Logs only недостатньо для scheduled ingestion.
 - Job status у database дозволить показувати стан crawler-а прямо в dashboard.
+- Partial failures мають бути видимі: якщо один detail page впав, job може бути `partial`, а не повністю `failed`.
 
 ## Відкладено після MVP
 
