@@ -12,7 +12,7 @@ from grant_tool.config import get_settings
 from grant_tool.db.models import Grant, JobRun, JobType
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.types import FetchedGrant, NormalizedGrantDraft
-from grant_tool.ingestion.utils import clean_text, extract_deadline, extract_funding_text, status_from_deadline
+from grant_tool.ingestion.utils import clean_text, extract_deadline, extract_funding_text, parse_datetime, status_from_deadline
 
 
 NORMALIZATION_VERSION = "stage5-deterministic-v1"
@@ -124,7 +124,9 @@ class FeatureExtractionService:
                 self._set_field_evidence(fields, "summary", "deterministic", Decimal("0.65"), summary)
 
         if draft.deadline_at is None:
-            deadline_at, deadline_text = extract_deadline(text)
+            deadline_at, deadline_text = self._deadline_from_payload(raw_payload)
+            if deadline_at is None:
+                deadline_at, deadline_text = extract_deadline(text)
             if deadline_at is not None:
                 draft.deadline_at = deadline_at
                 draft.deadline_text = draft.deadline_text or deadline_text
@@ -138,7 +140,8 @@ class FeatureExtractionService:
         if source_slug == "eu-funding":
             self._normalize_eu_program(draft, fields)
 
-        self._extract_funding(draft, text, fields)
+        self._extract_funding(draft, text, fields, raw_payload=raw_payload)
+        self._classify_opportunity(draft, text, fields)
         self._extract_taxonomy(draft, text, fields)
         self._extract_geography(draft, text, fields)
         self._extract_text_features(draft, text, fields)
@@ -190,11 +193,12 @@ class FeatureExtractionService:
             for grant in grants:
                 try:
                     draft = self._draft_from_grant(grant)
-                    self._reset_recomputed_fields(draft)
+                    grant_source_slug = grant.source.slug if grant.source else source_slug
+                    self._reset_recomputed_fields(draft, source_slug=grant_source_slug)
                     raw_snapshot = grant.latest_raw_snapshot
                     self.enrich_draft(
                         draft,
-                        source_slug=grant.source.slug if grant.source else source_slug,
+                        source_slug=grant_source_slug,
                         raw_text=raw_snapshot.raw_text if raw_snapshot else None,
                         raw_html=raw_snapshot.raw_html if raw_snapshot else None,
                         raw_payload=raw_snapshot.raw_payload if raw_snapshot else None,
@@ -323,10 +327,16 @@ class FeatureExtractionService:
         )
 
     @staticmethod
-    def _reset_recomputed_fields(draft: NormalizedGrantDraft) -> None:
+    def _reset_recomputed_fields(draft: NormalizedGrantDraft, *, source_slug: str | None = None) -> None:
         draft.summary = None
         draft.deadline_at = None
         draft.deadline_text = None
+        if source_slug == "diia-business":
+            draft.opportunity_type = "business_support"
+            draft.support_type = "finance_programme"
+        else:
+            draft.opportunity_type = "grant"
+            draft.support_type = "grant"
         draft.funding_amount_min = None
         draft.funding_amount_max = None
         draft.funding_amount_text = None
@@ -372,6 +382,48 @@ class FeatureExtractionService:
             FeatureExtractionService._payload_text(raw_payload),
         ]
         return clean_text(" ".join(part for part in parts if part)) or ""
+
+    @staticmethod
+    def _deadline_from_payload(raw_payload: dict[str, Any] | list[Any] | None) -> tuple[datetime | None, str | None]:
+        if raw_payload is None:
+            return None, None
+        candidates: list[datetime] = []
+
+        def collect_from_text(value: str) -> None:
+            if "deadline" not in value.lower():
+                return
+            for match in re.finditer(r"\b20\d{2}-\d{1,2}-\d{1,2}\b|\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", value):
+                parsed = parse_datetime(match.group(0))
+                if parsed:
+                    candidates.append(parsed)
+
+        def walk(value: Any, *, key_context: str = "") -> None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    walk(item, key_context=f"{key_context} {key}".strip())
+                return
+            if isinstance(value, list | tuple):
+                for item in value:
+                    walk(item, key_context=key_context)
+                return
+            if value is None:
+                return
+            text_value = str(value)
+            if "deadline" in key_context.lower():
+                parsed = parse_datetime(text_value)
+                if parsed:
+                    candidates.append(parsed)
+            collect_from_text(text_value)
+
+        walk(raw_payload)
+        if not candidates:
+            return None, None
+
+        now = datetime.now(UTC)
+        future = sorted(candidate for candidate in candidates if candidate.date() >= now.date())
+        chosen = future[0] if future else max(candidates)
+        evidence = "payload deadline dates: " + ", ".join(sorted({candidate.date().isoformat() for candidate in candidates}))
+        return chosen, evidence
 
     @staticmethod
     def _payload_text(raw_payload: dict[str, Any] | list[Any] | None) -> str | None:
@@ -464,17 +516,36 @@ class FeatureExtractionService:
         return clean_text(str(value)) if value is not None else None
 
     @staticmethod
-    def _extract_funding(draft: NormalizedGrantDraft, text: str, fields: dict[str, Any]) -> None:
+    def _extract_funding(
+        draft: NormalizedGrantDraft,
+        text: str,
+        fields: dict[str, Any],
+        *,
+        raw_payload: dict[str, Any] | list[Any] | None = None,
+    ) -> None:
         contextual_snippet = FeatureExtractionService._snippet(
             text,
             ("funding", "budget", "grant amount", "сума", "фінанс", "бюджет", "підтримк"),
             radius=360,
         )
-        funding_context = clean_text(" ".join(part for part in (draft.funding_amount_text, contextual_snippet, extract_funding_text(text)) if part))
-        funding_text = extract_funding_text(FeatureExtractionService._strip_dates(funding_context)) or draft.funding_amount_text or contextual_snippet
+        payload_budget = FeatureExtractionService._budget_context_from_payload(raw_payload)
+        funding_context = clean_text(
+            " ".join(
+                part
+                for part in (
+                    draft.funding_amount_text,
+                    payload_budget or contextual_snippet,
+                    None if payload_budget else extract_funding_text(text),
+                )
+                if part
+            )
+        )
+        amount_min, amount_max, currency = FeatureExtractionService._parse_funding(funding_context)
+        funding_text = None
+        if amount_min is not None or amount_max is not None or currency is not None:
+            funding_text = extract_funding_text(FeatureExtractionService._strip_dates(funding_context)) or draft.funding_amount_text or contextual_snippet
         if funding_text and (not draft.funding_amount_text or FeatureExtractionService._looks_like_date(draft.funding_amount_text)):
             draft.funding_amount_text = funding_text
-        amount_min, amount_max, currency = FeatureExtractionService._parse_funding(funding_context)
         if draft.funding_amount_min is None and amount_min is not None:
             draft.funding_amount_min = amount_min
         if draft.funding_amount_max is None and amount_max is not None:
@@ -483,6 +554,51 @@ class FeatureExtractionService:
             draft.currency = currency
         if funding_text:
             FeatureExtractionService._set_field_evidence(fields, "funding_amount", "deterministic", Decimal("0.70"), funding_text[:300])
+
+    @staticmethod
+    def _budget_context_from_payload(raw_payload: dict[str, Any] | list[Any] | None) -> str | None:
+        if raw_payload is None:
+            return None
+
+        def walk(value: Any, *, key_context: str = "") -> str | None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    found = walk(item, key_context=f"{key_context} {key}".strip())
+                    if found:
+                        return found
+                return None
+            if isinstance(value, list | tuple):
+                for item in value:
+                    found = walk(item, key_context=key_context)
+                    if found:
+                        return found
+                return None
+            if value is None:
+                return None
+            text_value = str(value)
+            lowered_context = key_context.lower()
+            if "budget" in lowered_context and ("budgetTopicActionMap" in text_value or "maxContribution" in text_value):
+                return text_value
+            return None
+
+        return walk(raw_payload)
+
+    @staticmethod
+    def _classify_opportunity(draft: NormalizedGrantDraft, text: str, fields: dict[str, Any]) -> None:
+        title = f" {draft.title} ".lower()
+        intro = f" {text[:900]} ".lower()
+        training_in_title = any(token in title for token in ("тренінг", "тренинг", "training", "workshop", "семінар"))
+        training_intro = re.search(r"(запрошує|реєстрац|набір)[^.]{0,160}(тренінг|тренинг|training|курс|семінар|workshop)", intro)
+        grant_in_title = any(token in title for token in ("грант", "конкурс", "запит на подання", "rfa", "request for applications"))
+        if training_in_title or (training_intro and not grant_in_title):
+            draft.opportunity_type = "training"
+            draft.support_type = "training"
+            FeatureExtractionService._set_field_evidence(fields, "opportunity_type", "deterministic", Decimal("0.80"), "training/course keyword")
+            return
+        if any(token in title for token in ("тендер", "tender", "procurement", "закупів")):
+            draft.opportunity_type = "tender"
+            draft.support_type = "procurement"
+            FeatureExtractionService._set_field_evidence(fields, "opportunity_type", "deterministic", Decimal("0.80"), "tender/procurement keyword")
 
     @staticmethod
     def _strip_dates(text: str | None) -> str | None:
@@ -533,11 +649,11 @@ class FeatureExtractionService:
             return None, None, None
 
         currency = None
-        if any(token in lowered for token in ("eur", "euro", "€")):
+        if "€" in lowered or re.search(r"\b(?:eur|euro)\b", lowered):
             currency = "EUR"
-        elif any(token in lowered for token in ("usd", "$")):
+        elif "$" in lowered or re.search(r"\busd\b", lowered):
             currency = "USD"
-        elif any(token in lowered for token in ("uah", "грн", "₴")):
+        elif "₴" in lowered or "грн" in lowered or re.search(r"\buah\b", lowered):
             currency = "UAH"
 
         amount_source = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b", " ", cleaned)
@@ -547,6 +663,8 @@ class FeatureExtractionService:
         amounts = [amount for amount in amounts if amount is not None]
         if not amounts:
             return None, None, currency
+        if currency is None and max(amounts) < Decimal("10000"):
+            return None, None, None
         if any(token in lowered for token in ("up to", "до ", "максим", "max")):
             return None, max(amounts), currency
         if len(amounts) >= 2:

@@ -13,6 +13,7 @@ from grant_tool.extraction import FeatureExtractionService
 from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
 from grant_tool.ingestion.service import IngestionService
 from grant_tool.ingestion.types import FetchedGrant, NormalizedGrantDraft
+from grant_tool.ingestion.utils import extract_deadline, status_from_deadline
 
 from tests.test_stage3_ingestion import FakeHttpClient, html_response
 
@@ -76,6 +77,43 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertTrue(draft.needs_manual_review)
         self.assertIn("very short extracted text", draft.manual_review_reason or "")
 
+    def test_training_page_is_not_classified_as_grant(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.prostir.ua/?grants=tochka-startu",
+            title="Точка старту: 3-денний тренінг для молоді",
+            description_text=(
+                "Актуально до: 25.05.26. SILab Ukraine запрошує на 3-денний тренінг "
+                "для молоді з підприємництва."
+            ),
+            opportunity_type="grant",
+            support_type="grant",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="prostir")
+
+        self.assertEqual(draft.status, "open")
+        self.assertEqual(draft.deadline_at.date().isoformat(), "2026-05-25")
+        self.assertEqual(draft.opportunity_type, "training")
+        self.assertEqual(draft.support_type, "training")
+
+    def test_eu_multiple_cutoffs_use_next_future_deadline(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/CREA-MEDIA-2026-FILMOVE",
+            title="Films on the Move",
+            status="unknown",
+        )
+        raw_payload = {
+            "metadata": {
+                "deadlineDate": ['{"deadlineDates":["2026-03-19","2026-07-16"]}'],
+                "budgetOverview": ['{"budgetTopicActionMap":{"111805":[{"deadlineDates":["2026-03-19","2026-07-16"]}]}}'],
+            }
+        }
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="eu-funding", raw_payload=raw_payload)
+
+        self.assertEqual(draft.status, "open")
+        self.assertEqual(draft.deadline_at.date().isoformat(), "2026-07-16")
+
     def test_ingestion_service_applies_stage5_features(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"
         detail_url = "https://www.prostir.ua/grant/test-grant/"
@@ -138,6 +176,38 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertIn("community", grant.topics)
         self.assertIn("humanitarian", grant.topics)
         self.assertEqual(grant.currency, "USD")
+
+    def test_deadline_parser_ignores_publication_date_and_reads_ukrainian_month(self) -> None:
+        text = (
+            "ГУРТ шукає партнерів для створення осередків самодопомоги 20.05.2026. "
+            "Оцінювання ЗАЯВКИ, яку треба заповнити до 04 червня 2026. "
+            "Навчання менеджера осередку 19-20 червня 2026."
+        )
+
+        deadline_at, deadline_text = extract_deadline(text)
+
+        self.assertIsNotNone(deadline_at)
+        self.assertEqual(deadline_at.date().isoformat(), "2026-06-04")
+        self.assertIn("заповнити до 04 червня 2026", deadline_text)
+        self.assertEqual(status_from_deadline(deadline_at), "open")
+
+    def test_deadline_parser_reads_two_digit_year_and_not_later_phrase(self) -> None:
+        prostir_text = (
+            "15.05.2026 - 25.06.2026 Конкурс грантів. "
+            "Актуально до: 25.06.26 Зафіксувати у Google календарі."
+        )
+        gurt_text = (
+            "Конкурс на розробку моделей працевлаштування ветеранів з інвалідністю 19.05.2026. "
+            "Заявки мають бути отримані не пізніше 10 червня 2026 р., 23:59 за київським часом."
+        )
+
+        prostir_deadline, _ = extract_deadline(prostir_text)
+        gurt_deadline, _ = extract_deadline(gurt_text)
+
+        self.assertEqual(prostir_deadline.date().isoformat(), "2026-06-25")
+        self.assertEqual(gurt_deadline.date().isoformat(), "2026-06-10")
+        self.assertEqual(status_from_deadline(prostir_deadline), "open")
+        self.assertEqual(status_from_deadline(gurt_deadline), "open")
 
 
 if __name__ == "__main__":

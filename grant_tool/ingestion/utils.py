@@ -12,7 +12,40 @@ from bs4 import BeautifulSoup
 _WHITESPACE_RE = re.compile(r"\s+")
 _DATE_PATTERNS = (
     re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b"),
+    re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{2})\b"),
     re.compile(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b"),
+)
+_UK_MONTHS = {
+    "січня": 1,
+    "січень": 1,
+    "лютого": 2,
+    "лютий": 2,
+    "березня": 3,
+    "березень": 3,
+    "квітня": 4,
+    "квітень": 4,
+    "травня": 5,
+    "травень": 5,
+    "червня": 6,
+    "червень": 6,
+    "липня": 7,
+    "липень": 7,
+    "серпня": 8,
+    "серпень": 8,
+    "вересня": 9,
+    "вересень": 9,
+    "жовтня": 10,
+    "жовтень": 10,
+    "листопада": 11,
+    "листопад": 11,
+    "грудня": 12,
+    "грудень": 12,
+}
+_UK_DATE_RE = re.compile(
+    r"\b(\d{1,2})\s+("
+    + "|".join(sorted(_UK_MONTHS, key=len, reverse=True))
+    + r")\s+(20\d{2})\b",
+    re.IGNORECASE,
 )
 
 
@@ -76,6 +109,15 @@ def parse_datetime(value: str | None) -> datetime | None:
     text = clean_text(value)
     if not text:
         return None
+    uk_match = _UK_DATE_RE.search(text.lower())
+    if uk_match:
+        day = int(uk_match.group(1))
+        month = _UK_MONTHS[uk_match.group(2).lower()]
+        year = int(uk_match.group(3))
+        try:
+            return datetime(year, month, day, tzinfo=UTC)
+        except ValueError:
+            pass
     try:
         parsed = parsedate_to_datetime(text)
         if parsed.tzinfo is None:
@@ -92,6 +134,8 @@ def parse_datetime(value: str | None) -> datetime | None:
             year, month, day = parts
         else:
             day, month, year = parts
+        if year < 100:
+            year += 2000
         try:
             return datetime(year, month, day, tzinfo=UTC)
         except ValueError:
@@ -108,22 +152,32 @@ def extract_deadline(text: str | None) -> tuple[datetime | None, str | None]:
         "дедлайн",
         "актуально до",
         "подати до",
+        "подання до",
+        "заповнити до",
+        "заповніть",
         "приймаються до",
-        "до ",
         "кінцевий термін",
+        "термін подання",
+        "не пізніше",
+        "мають бути отримані",
+        "заявки мають бути",
     )
     lowered = cleaned.lower()
     for keyword in keywords:
-        idx = lowered.find(keyword)
-        if idx == -1:
-            continue
-        snippet = cleaned[idx : idx + 180]
-        parsed = parse_datetime(snippet)
+        start = 0
+        while True:
+            idx = lowered.find(keyword, start)
+            if idx == -1:
+                break
+            snippet = cleaned[idx : idx + 220]
+            parsed = parse_datetime(snippet)
+            if parsed:
+                return parsed, snippet
+            start = idx + len(keyword)
+    if len(cleaned) <= 240:
+        parsed = parse_datetime(cleaned)
         if parsed:
-            return parsed, snippet
-    parsed = parse_datetime(cleaned)
-    if parsed:
-        return parsed, None
+            return parsed, None
     return None, None
 
 
@@ -159,4 +213,6 @@ def status_from_deadline(deadline_at: datetime | None) -> str:
     if deadline_at is None:
         return "unknown"
     now = datetime.now(UTC)
+    if deadline_at.hour == 0 and deadline_at.minute == 0 and deadline_at.second == 0:
+        return "open" if deadline_at.date() >= now.date() else "closed"
     return "open" if deadline_at >= now else "closed"

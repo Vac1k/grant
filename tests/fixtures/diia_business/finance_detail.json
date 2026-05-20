@@ -1,0 +1,82 @@
+{
+  "service": {
+    "id": 148,
+    "slug": "grant_na_vlasnu_spravu",
+    "statusId": 2,
+    "companyName": "Урядовий проєкт єРобота",
+    "title": "Грант на власну справу",
+    "description": "Грантова програма має на меті надати грант для підприємців для створення або розвитку власного бізнесу",
+    "externalLink": "https://diia.gov.ua/services/grant-na-vlasnu-spravu",
+    "category": {
+      "id": 12,
+      "slug": "erobota",
+      "translations": [
+        {"title": "Урядовий проєкт єРобота", "locale": "ua"},
+        {"title": "Government project eRobota", "locale": "en"}
+      ]
+    },
+    "serviceAttributes": [
+      {
+        "id": 1707,
+        "value": "Фінансова",
+        "categoryAttribute": {
+          "attribute": {
+            "name": "assistanceType",
+            "translations": [
+              {"title": "Вид допомоги", "locale": "ua"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 1708,
+        "value": "До 250 000",
+        "categoryAttribute": {
+          "attribute": {
+            "name": "grantAmount",
+            "translations": [
+              {"title": "Сума", "locale": "ua"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 1709,
+        "value": "UAH",
+        "categoryAttribute": {
+          "attribute": {
+            "name": "currency",
+            "translations": [
+              {"title": "Валюта", "locale": "ua"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 1710,
+        "value": "На постійній основі",
+        "categoryAttribute": {
+          "attribute": {
+            "name": "finalProgramTerm",
+            "translations": [
+              {"title": "Кінцевий строк дії програми", "locale": "ua"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 1711,
+        "value": "Вся Україна",
+        "categoryAttribute": {
+          "attribute": {
+            "name": "Область",
+            "translations": [
+              {"title": "Область", "locale": "ua"}
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "similar": []
+}

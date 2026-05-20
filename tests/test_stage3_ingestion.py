@@ -165,21 +165,22 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(grant.language, "uk")
         self.assertTrue(grant.documents)
 
-    def test_diia_business_connector_parses_sitemap_and_detail(self) -> None:
-        sitemap_url = "https://www.business.diia.gov.ua/sitemap.xml"
-        detail_url = "https://www.business.diia.gov.ua/finance/programs/test-program"
+    def test_diia_business_connector_parses_api_finance_service(self) -> None:
+        api_url = "https://api.business.diia.gov.ua/api/front"
+        list_url = f"{api_url}/finance"
+        detail_url = f"{api_url}/finance/service/grant_na_vlasnu_spravu"
         source = self.source(
             slug="diia-business",
-            access_strategy=AccessStrategy.SITEMAP_HTML,
+            access_strategy=AccessStrategy.API,
             base_url="https://www.business.diia.gov.ua",
-            sitemap_url=sitemap_url,
+            api_url=api_url,
         )
         connector = DiiaBusinessConnector(
             source=source,
             http_client=FakeHttpClient(
                 {
-                    sitemap_url: html_response(sitemap_url, "diia_business/sitemap.xml", "application/xml"),
-                    detail_url: html_response(detail_url, "diia_business/detail.html"),
+                    list_url: json_response(list_url, "diia_business/finance_list.json"),
+                    detail_url: json_response(detail_url, "diia_business/finance_detail.json"),
                 }
             ),
         )
@@ -189,8 +190,13 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(len(result.errors), 0)
         self.assertEqual(len(result.grants), 1)
         grant = result.grants[0].normalized
-        self.assertEqual(grant.opportunity_type, "business_support")
-        self.assertEqual(grant.support_type, "finance_programme")
+        self.assertEqual(grant.source_url, "https://www.business.diia.gov.ua/finance/grant_na_vlasnu_spravu")
+        self.assertEqual(grant.opportunity_type, "grant")
+        self.assertEqual(grant.support_type, "grant")
+        self.assertEqual(grant.funding_amount_text, "До 250 000")
+        self.assertEqual(grant.currency, "UAH")
+        self.assertEqual(grant.funder_name, "Урядовий проєкт єРобота")
+        self.assertEqual(grant.geography_text, "Вся Україна")
         self.assertEqual(grant.status, "open")
 
     def test_gurt_connector_parses_list_and_detail(self) -> None:

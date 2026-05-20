@@ -10,3 +10,4 @@ initial_grants/
 dist/
 build/
 *.egg-info/
+stages_3_4_5_implementation_guide.md
