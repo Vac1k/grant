@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import argparse
 import uuid
+from pathlib import Path
 
+from grant_tool.client_import import ImportResult, import_application_history, import_client_profiles
 from grant_tool.config import get_settings
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.db.session import SessionLocal
+from grant_tool.extraction import FeatureExtractionService
+from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
+from grant_tool.ingestion.service import IngestionService
 from grant_tool.sources import seed_mvp_sources
+
+
+DEFAULT_CLIENTS_FILE = Path("data/manual_seed/client_profiles.manual.csv")
+DEFAULT_HISTORY_FILE = Path("data/manual_seed/application_history.manual.csv")
 
 
 def _print_default() -> None:
@@ -71,6 +80,87 @@ def _cmd_jobs_show(args: argparse.Namespace) -> None:
         print(f"job_metadata: {job.job_metadata}")
 
 
+def _print_import_result(label: str, result: ImportResult) -> None:
+    print(
+        f"{label}: processed={result.processed} created={result.created} "
+        f"updated={result.updated} skipped={result.skipped} failed={result.failed}"
+    )
+    for error in result.errors:
+        print(f"- {error}")
+
+
+def _cmd_import_clients(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        result = import_client_profiles(repository, args.file)
+        session.commit()
+
+    _print_import_result("Client profiles import", result)
+
+
+def _cmd_import_application_history(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        result = import_application_history(repository, args.file)
+        session.commit()
+
+    _print_import_result("Application history import", result)
+
+
+def _cmd_import_manual_seed(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        clients_result = import_client_profiles(repository, args.clients_file)
+        history_result = import_application_history(repository, args.history_file)
+        session.commit()
+
+    _print_import_result("Client profiles import", clients_result)
+    _print_import_result("Application history import", history_result)
+
+
+def _cmd_ingest(args: argparse.Namespace) -> None:
+    source_slugs = list(CONNECTOR_CLASSES) if args.all else [args.source]
+
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        seed_mvp_sources(repository)
+        service = IngestionService(repository=repository, connector_classes=CONNECTOR_CLASSES)
+
+        for source_slug in source_slugs:
+            summary = service.run_source(source_slug, limit=args.limit)
+            print(
+                f"{summary.source_slug}: {summary.status} "
+                f"processed={summary.processed_count} "
+                f"created={summary.created_count} "
+                f"updated={summary.updated_count} "
+                f"skipped={summary.skipped_count} "
+                f"failed={summary.failed_count} "
+                f"errors={len(summary.errors)} "
+                f"job={summary.job.id}"
+            )
+        session.commit()
+
+
+def _cmd_extract_features(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = FeatureExtractionService(repository=repository, use_llm=args.use_llm)
+        summary = service.run_existing(source_slug=args.source, limit=args.limit)
+        session.commit()
+
+    print(
+        f"Feature extraction: {summary.job.status} "
+        f"processed={summary.processed_count} "
+        f"updated={summary.updated_count} "
+        f"skipped={summary.skipped_count} "
+        f"failed={summary.failed_count} "
+        f"errors={len(summary.errors)} "
+        f"job={summary.job.id}"
+    )
+    for error in summary.errors:
+        print(f"- {error}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="grant-tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -89,6 +179,45 @@ def _build_parser() -> argparse.ArgumentParser:
     jobs_show = job_subparsers.add_parser("show", help="Show one job")
     jobs_show.add_argument("job_id")
     jobs_show.set_defaults(func=_cmd_jobs_show)
+
+    import_clients = subparsers.add_parser("import-clients", help="Import client profiles from CSV")
+    import_clients.add_argument("--file", type=Path, default=DEFAULT_CLIENTS_FILE)
+    import_clients.set_defaults(func=_cmd_import_clients)
+
+    import_history = subparsers.add_parser(
+        "import-application-history",
+        help="Import application history from CSV",
+    )
+    import_history.add_argument("--file", type=Path, default=DEFAULT_HISTORY_FILE)
+    import_history.set_defaults(func=_cmd_import_application_history)
+
+    import_manual_seed = subparsers.add_parser(
+        "import-manual-seed",
+        help="Import curated manual seed clients and application history",
+    )
+    import_manual_seed.add_argument("--clients-file", type=Path, default=DEFAULT_CLIENTS_FILE)
+    import_manual_seed.add_argument("--history-file", type=Path, default=DEFAULT_HISTORY_FILE)
+    import_manual_seed.set_defaults(func=_cmd_import_manual_seed)
+
+    ingest = subparsers.add_parser("ingest", help="Run grant ingestion")
+    ingest_source = ingest.add_mutually_exclusive_group(required=True)
+    ingest_source.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), help="Source slug to ingest")
+    ingest_source.add_argument("--all", action="store_true", help="Ingest all registered MVP sources")
+    ingest.add_argument("--limit", type=int, default=20, help="Maximum grants per source")
+    ingest.set_defaults(func=_cmd_ingest)
+
+    extract_features = subparsers.add_parser(
+        "extract-features",
+        help="Run Stage 5 feature extraction for stored grants",
+    )
+    extract_features.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), default=None)
+    extract_features.add_argument("--limit", type=int, default=100)
+    extract_features.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Use optional LLM extraction when OPENAI_API_KEY is configured",
+    )
+    extract_features.set_defaults(func=_cmd_extract_features)
 
     return parser
 

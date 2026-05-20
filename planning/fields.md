@@ -313,6 +313,12 @@ Raw data треба зберігати завжди.
 }
 ```
 
+Статус реалізації Stage 5:
+
+- `extraction_confidence` заповнюється deterministic extraction service.
+- `extraction_metadata.fields` зберігає method/confidence/evidence для полів.
+- `extraction_metadata.feature_card` зберігає normalized grant card для подальшого filtering/matching.
+
 ## Matching impact
 
 Для matching найважливіші поля:

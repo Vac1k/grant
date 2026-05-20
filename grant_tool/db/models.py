@@ -40,6 +40,7 @@ class JobType(StrEnum):
     INGESTION = "ingestion"
     IMPORT_CLIENTS = "import_clients"
     IMPORT_HISTORY = "import_history"
+    FEATURE_EXTRACTION = "feature_extraction"
     MATCHING = "matching"
     LLM_EXTRACTION = "llm_extraction"
     EMBEDDING = "embedding"

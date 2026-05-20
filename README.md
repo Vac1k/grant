@@ -40,6 +40,24 @@ Use `docker compose down -v` only when you want to delete the local PostgreSQL v
 
 Detailed commands live in [`docs/start.md`](docs/start.md).
 
+## Ingestion
+
+Stage 3 ingestion and Stage 5 feature extraction are available through the CLI:
+
+```bash
+docker compose exec app grant-tool ingest --all --limit 20
+```
+
+This collects up to 20 grants per MVP source, stores raw snapshots, runs deterministic feature extraction, upserts normalized grants, and records a `JobRun`.
+
+To re-run Stage 5 extraction for already stored grants:
+
+```bash
+docker compose exec app grant-tool extract-features --limit 100
+```
+
+`--use-llm` is optional and only runs when `OPENAI_API_KEY` is configured. Without it, extraction stays deterministic and uses only source data already fetched from the real websites.
+
 ## Core Logic
 
 The system follows this flow:

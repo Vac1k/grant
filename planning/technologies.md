@@ -142,6 +142,8 @@ Connector framework:
 - Diia Business через sitemap/list + HTML detail parsing
 - GURT через HTML list/detail parsing
 
+Статус Stage 3: done. Реалізовано `grant-tool ingest --source <source> --limit 20` і `grant-tool ingest --all --limit 20`.
+
 Testing policy для connectors:
 
 - parser tests працюють на local fixtures;
@@ -178,6 +180,13 @@ Environment variables:
 - LLM отримує normalized grant card, client feature card, relevant application history records і score breakdown.
 - LLM не має трактувати lost application як доказ поганого fit.
 - LLM повертає explanation, risks і manual check notes.
+
+Статус Stage 5: done for deterministic extraction foundation.
+
+- `FeatureExtractionService` виконує rule-based extraction під час ingestion.
+- `grant-tool extract-features` дозволяє повторно прогнати extraction для stored grants.
+- Optional LLM extraction доступний через `--use-llm`, але за замовчуванням не запускається.
+- LLM extraction має використовувати тільки raw source text/evidence, не вигадані поля.
 
 ## Client profiles
 

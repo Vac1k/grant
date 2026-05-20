@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from grant_tool.db.models import (
     AccessStrategy,
@@ -50,6 +50,29 @@ class GrantRepository:
         if enabled_only:
             query = query.where(Source.enabled.is_(True))
         return list(self.session.scalars(query))
+
+    def get_grant_by_source_identity(
+        self,
+        *,
+        source_id: uuid.UUID,
+        source_url: str,
+        source_record_id: str | None = None,
+    ) -> Grant | None:
+        if source_record_id:
+            grant = self.session.scalar(
+                select(Grant).where(
+                    Grant.source_id == source_id,
+                    Grant.source_record_id == source_record_id,
+                )
+            )
+            if grant is not None:
+                return grant
+        return self.session.scalar(
+            select(Grant).where(
+                Grant.source_id == source_id,
+                Grant.source_url == source_url,
+            )
+        )
 
     def upsert_source(
         self,
@@ -281,6 +304,33 @@ class GrantRepository:
         self.session.flush()
         return grant
 
+    def list_grants_for_feature_extraction(
+        self,
+        *,
+        source_slug: str | None = None,
+        limit: int = 100,
+    ) -> list[Grant]:
+        query = (
+            select(Grant)
+            .options(
+                selectinload(Grant.source),
+                selectinload(Grant.latest_raw_snapshot),
+            )
+            .order_by(Grant.updated_at.desc())
+            .limit(limit)
+        )
+        if source_slug is not None:
+            query = query.join(Source).where(Source.slug == source_slug)
+        return list(self.session.scalars(query))
+
+    def update_grant_features(self, grant: Grant, **fields: Any) -> Grant:
+        for field, value in fields.items():
+            if not hasattr(grant, field):
+                raise ValueError(f"Unknown grant field: {field}")
+            setattr(grant, field, value)
+        self.session.flush()
+        return grant
+
     def upsert_client_profile(
         self,
         *,
@@ -303,6 +353,12 @@ class GrantRepository:
         self.session.flush()
         return client
 
+    def get_client_profile_by_slug(self, slug: str) -> ClientProfile | None:
+        return self.session.scalar(select(ClientProfile).where(ClientProfile.slug == slug))
+
+    def get_client_profile_by_name(self, name: str) -> ClientProfile | None:
+        return self.session.scalar(select(ClientProfile).where(ClientProfile.name == name))
+
     def save_application_history(
         self,
         *,
@@ -324,6 +380,56 @@ class GrantRepository:
             **fields,
         )
         self.session.add(history)
+        self.session.flush()
+        return history
+
+    def upsert_application_history(
+        self,
+        *,
+        client_profile_id: uuid.UUID,
+        client_name: str,
+        grant_title: str,
+        result: str = "unknown",
+        grant_id: uuid.UUID | None = None,
+        similarity_weight: Decimal | float | int = Decimal("1"),
+        grant_source: str | None = None,
+        program_name: str | None = None,
+        **fields: Any,
+    ) -> ApplicationHistory:
+        query = select(ApplicationHistory).where(
+            ApplicationHistory.client_profile_id == client_profile_id,
+            ApplicationHistory.grant_title == grant_title,
+        )
+        if grant_source is None:
+            query = query.where(ApplicationHistory.grant_source.is_(None))
+        else:
+            query = query.where(ApplicationHistory.grant_source == grant_source)
+        if program_name is None:
+            query = query.where(ApplicationHistory.program_name.is_(None))
+        else:
+            query = query.where(ApplicationHistory.program_name == program_name)
+
+        history = self.session.scalar(query)
+        values = {
+            "client_name": client_name,
+            "grant_title": grant_title,
+            "grant_source": grant_source,
+            "program_name": program_name,
+            "result": result,
+            "grant_id": grant_id,
+            "similarity_weight": Decimal(str(similarity_weight)),
+            **fields,
+        }
+
+        if history is None:
+            history = ApplicationHistory(client_profile_id=client_profile_id, **values)
+            self.session.add(history)
+        else:
+            for field, value in values.items():
+                if not hasattr(history, field):
+                    raise ValueError(f"Unknown application history field: {field}")
+                setattr(history, field, value)
+
         self.session.flush()
         return history
 

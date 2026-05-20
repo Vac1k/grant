@@ -178,6 +178,69 @@ docker compose exec app alembic current
 docker compose exec db psql -U grant -d grant -c "\dt"
 ```
 
+## Ingestion
+
+Stage 3 ingestion запускається через `grant-tool`. Під час ingestion також автоматично виконується Stage 5 deterministic feature extraction.
+
+Запустити одне джерело:
+
+```bash
+docker compose exec app grant-tool ingest --source eu-funding --limit 20
+docker compose exec app grant-tool ingest --source prostir --limit 20
+docker compose exec app grant-tool ingest --source diia-business --limit 20
+docker compose exec app grant-tool ingest --source gurt --limit 20
+```
+
+Запустити всі MVP sources:
+
+```bash
+docker compose exec app grant-tool ingest --all --limit 20
+```
+
+`--limit` означає максимальну кількість грантів на source. Default value: `20`.
+
+Кожен ingestion запуск створює `JobRun`, який можна подивитись так:
+
+```bash
+docker compose exec app grant-tool jobs list --type ingestion
+```
+
+## Feature Extraction
+
+Stage 5 extraction нормалізує grant feature card:
+
+- `status`
+- `deadline_at`
+- `funding_amount_*`
+- `currency`
+- `applicant_types`
+- `topics`
+- `countries`
+- `eligibility_text`
+- `restrictions_text`
+- `extraction_confidence`
+- `extraction_metadata`
+
+Повторно запустити extraction для вже збережених grants:
+
+```bash
+docker compose exec app grant-tool extract-features --limit 100
+```
+
+Для конкретного source:
+
+```bash
+docker compose exec app grant-tool extract-features --source prostir --limit 20
+```
+
+Optional LLM extraction:
+
+```bash
+docker compose exec app grant-tool extract-features --limit 100 --use-llm
+```
+
+`--use-llm` працює тільки якщо заданий `OPENAI_API_KEY`. LLM prompt просить витягувати тільки факти з raw source text і не вигадувати відсутні дані.
+
 ## OpenAPI docs
 
 FastAPI автоматично генерує API документацію.

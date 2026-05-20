@@ -153,7 +153,18 @@ MVP-джерела:
   - потім GURT HTML list/detail connector.
 - Для кожного connector додати fixture-based parser tests без обов'язкового live internet.
 
+Статус реалізації Stage 3: done.
+
+- Додано shared connector framework у `grant_tool/ingestion`.
+- Додано connectors для EU Funding, Prostir, Diia Business і GURT.
+- Додано CLI `grant-tool ingest --source <source> --limit 20` і `grant-tool ingest --all --limit 20`.
+- Кожен ingestion запуск створює `JobRun`, зберігає `RawGrantSnapshot` і робить normalized `Grant` upsert.
+- Parser tests працюють на local fixtures без live internet.
+- Live smoke перевірено з conservative `--limit 2` для кожного MVP source.
+
 ## Feature Extraction
+
+Статус реалізації Stage 5: done.
 
 - Детерміноване витягування для:
   - title
@@ -180,6 +191,31 @@ MVP-джерела:
   - `OPENAI_API_KEY`
   - `LLM_MODEL`
   - `EMBEDDING_MODEL`
+
+Фактично зроблено:
+
+- Додано package `grant_tool/extraction`.
+- Додано `FeatureExtractionService`.
+- Ingestion автоматично запускає deterministic Stage 5 enrichment перед `Grant` upsert.
+- Додано CLI:
+  - `grant-tool extract-features --limit 100`
+  - `grant-tool extract-features --source <source> --limit 20`
+  - `grant-tool extract-features --use-llm`
+- Додано `feature_extraction` job type для rerun extraction jobs.
+- Deterministic extraction нормалізує:
+  - title fallback із URL для generic titles;
+  - summary;
+  - deadline/status;
+  - funding amount min/max/currency;
+  - applicant types: `SME`, `startup`, `company`, `NGO`, `consortium`;
+  - topics: `AI`, `defence`, `dual-use`, `innovation`, `community`, `business support`, `education`, `culture`, `humanitarian`;
+  - countries/geography;
+  - eligibility/restrictions/cofinancing/consortium/contact snippets;
+  - `extraction_confidence`;
+  - `extraction_metadata.fields` evidence;
+  - `extraction_metadata.feature_card`.
+- Optional LLM extraction uses `OPENAI_API_KEY`/`LLM_MODEL` and is disabled by default.
+- Tests додано у `tests/test_stage5_extraction.py`.
 
 ## Matching
 

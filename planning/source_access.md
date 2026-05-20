@@ -168,6 +168,8 @@ Seed sources має створити records для:
 
 Stage 3 треба починати не з конкретного source, а з connector framework.
 
+Статус реалізації: done. Connector framework і 4 MVP connectors вже реалізовані, протестовані на fixtures і перевірені live smoke з conservative `--limit 2`.
+
 Спільний framework має включати:
 
 - `BaseConnector`;
