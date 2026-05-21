@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1720" viewBox="0 0 2200 1720" role="img" aria-labelledby="title desc">
+  <title id="title">Карта полів grant extraction та matching</title>
+  <desc id="desc">Українська SVG-схема для junior developer: звідки приходять grants, які поля зберігаються, як вони нормалізуються і які поля використовуються для matching.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#44546f"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#172b4d" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg { fill: #f6f8fb; }
+      .title { font-family: Arial, sans-serif; font-size: 38px; font-weight: 700; fill: #172b4d; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 19px; fill: #5e6c84; }
+      .panel { fill: #ffffff; stroke: #c7d0dd; stroke-width: 2; rx: 14; filter: url(#shadow); }
+      .panel-blue { stroke: #2563eb; }
+      .panel-green { stroke: #15803d; }
+      .panel-orange { stroke: #c2410c; }
+      .panel-purple { stroke: #7c3aed; }
+      .panel-red { stroke: #be123c; }
+      .panel-dark { stroke: #334155; }
+      .head { font-family: Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #172b4d; }
+      .label { font-family: Arial, sans-serif; font-size: 17px; font-weight: 700; fill: #253858; }
+      .text { font-family: Arial, sans-serif; font-size: 15px; fill: #253858; }
+      .small { font-family: Arial, sans-serif; font-size: 13.5px; fill: #5e6c84; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13.5px; fill: #172b4d; }
+      .pill { fill: #edf2ff; stroke: #b8c7ff; stroke-width: 1; }
+      .arrow { fill: none; stroke: #44546f; stroke-width: 2.4; marker-end: url(#arrow); }
+      .flow { fill: none; stroke: #9aa7b8; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="2200" height="1720"/>
+  <text x="1100" y="58" text-anchor="middle" class="title">Grant Extraction / Fields / Matching Map</text>
+  <text x="1100" y="88" text-anchor="middle" class="subtitle">Українська схема для junior developer: як grant проходить від source до dashboard і які поля реально використовуються.</text>
+
+  <rect x="70" y="125" width="2060" height="88" rx="16" fill="#172b4d" filter="url(#shadow)"/>
+  <text x="110" y="165" class="head" fill="#ffffff">Головна ідея</text>
+  <text x="110" y="194" class="text" fill="#e7eefc">Ми не довіряємо HTML/API напряму. Спочатку зберігаємо raw snapshot, потім нормалізуємо grant card, потім порівнюємо grant card з client profile + application history.</text>
+
+  <!-- Fetch parameters -->
+  <rect x="70" y="255" width="660" height="315" class="panel panel-blue"/>
+  <text x="100" y="292" class="head">1. Як запускаємо збір grants</text>
+  <text x="100" y="326" class="label">CLI параметри</text>
+  <text x="100" y="352" class="mono">grant-tool ingest --source &lt;slug&gt; --limit 20</text>
+  <text x="100" y="375" class="mono">grant-tool ingest --all --limit 20</text>
+  <text x="100" y="405" class="text">`source_slug` вибирає connector: eu-funding, prostir, diia-business, gurt.</text>
+  <text x="100" y="429" class="text">`limit` обмежує кількість grants на source.</text>
+  <text x="100" y="453" class="text">`HTTP_USER_AGENT` і `rate_limit_seconds` беруться з config/source.</text>
+  <text x="100" y="487" class="label">Source config fields</text>
+  <text x="100" y="513" class="mono">slug, name, base_url, list_url, api_url, feed_url, sitemap_url</text>
+  <text x="100" y="536" class="mono">access_strategy, requires_browser, enabled, rate_limit_seconds</text>
+  <text x="100" y="559" class="mono">notes, source_metadata</text>
+
+  <rect x="770" y="255" width="660" height="315" class="panel panel-blue"/>
+  <text x="800" y="292" class="head">2. Source-specific fetch</text>
+  <text x="800" y="326" class="label">EU Funding API</text>
+  <text x="800" y="350" class="text">POST до `api_url`; params: `apiKey=SEDIA`, `text=***`,</text>
+  <text x="800" y="373" class="text">`pageSize=limit`, `pageNumber=1`; query: type 1/2, period 2021-2027.</text>
+  <text x="800" y="405" class="label">Prostir</text>
+  <text x="800" y="429" class="text">RSS discovery з `feed_url`, потім HTML detail page.</text>
+  <text x="800" y="461" class="label">Diia Business</text>
+  <text x="800" y="485" class="text">API `/finance?take=limit&amp;skip=0`, detail `/finance/service/{slug}`.</text>
+  <text x="800" y="517" class="label">GURT</text>
+  <text x="800" y="541" class="text">HTML list page `list_url`, потім HTML detail pages.</text>
+
+  <rect x="1470" y="255" width="660" height="315" class="panel panel-blue"/>
+  <text x="1500" y="292" class="head">3. Що повертає connector</text>
+  <text x="1500" y="326" class="label">FetchedGrant</text>
+  <text x="1500" y="352" class="mono">normalized: NormalizedGrantDraft</text>
+  <text x="1500" y="375" class="mono">raw_payload, raw_html, raw_text</text>
+  <text x="1500" y="398" class="mono">raw_title, raw_summary, http_status, content_type</text>
+  <text x="1500" y="421" class="mono">snapshot_metadata</text>
+  <text x="1500" y="455" class="label">Dedup / update keys</text>
+  <text x="1500" y="481" class="text">Спочатку шукаємо grant за `source_id + source_record_id`.</text>
+  <text x="1500" y="505" class="text">Якщо `source_record_id` немає - за `source_id + source_url`.</text>
+  <text x="1500" y="529" class="text">Raw snapshot унікальний за `source_id + source_url + content_hash`.</text>
+  <text x="1500" y="553" class="small">Це робить repeated ingestion idempotent.</text>
+
+  <path class="flow" d="M730 412 L770 412"/>
+  <path class="flow" d="M1430 412 L1470 412"/>
+
+  <!-- Raw snapshot -->
+  <rect x="70" y="625" width="660" height="270" class="panel panel-orange"/>
+  <text x="100" y="662" class="head">4. RawGrantSnapshot: що зберігаємо до extraction</text>
+  <text x="100" y="696" class="mono">id, source_id, source_record_id, source_url</text>
+  <text x="100" y="719" class="mono">fetched_at, http_status, content_type</text>
+  <text x="100" y="742" class="mono">raw_title, raw_summary, raw_text, raw_html</text>
+  <text x="100" y="765" class="mono">raw_payload, content_hash, snapshot_metadata</text>
+  <text x="100" y="802" class="label">Навіщо</text>
+  <text x="100" y="828" class="text">Audit trail: можна перевірити, що саме прийшло з сайту/API.</text>
+  <text x="100" y="852" class="text">Можна rerun extraction без нового fetch.</text>
+  <text x="100" y="876" class="text">Можна бачити зміни через `content_hash`.</text>
+
+  <!-- Normalized fields -->
+  <rect x="770" y="625" width="1360" height="420" class="panel panel-green"/>
+  <text x="800" y="662" class="head">5. Grant: всі normalized поля, які є в implementation</text>
+
+  <text x="800" y="698" class="label">Identity / links / timestamps</text>
+  <text x="800" y="723" class="mono">id, source_id, latest_raw_snapshot_id, source_record_id, source_url, application_url</text>
+  <text x="800" y="746" class="mono">created_at, updated_at</text>
+
+  <text x="800" y="781" class="label">Basic content</text>
+  <text x="800" y="806" class="mono">title, summary, description_text, language</text>
+  <text x="800" y="829" class="mono">status, published_at, opens_at, deadline_at, deadline_text</text>
+  <text x="800" y="852" class="mono">program_name, funder_name, opportunity_type, support_type</text>
+
+  <text x="800" y="887" class="label">Funding</text>
+  <text x="800" y="912" class="mono">funding_amount_min, funding_amount_max, funding_amount_text, currency</text>
+
+  <text x="800" y="947" class="label">Geography / eligibility / taxonomy</text>
+  <text x="800" y="972" class="mono">geography_text, countries, regions, eligibility_text</text>
+  <text x="800" y="995" class="mono">applicant_types, topics, keywords</text>
+
+  <text x="1470" y="698" class="label">Requirements / details</text>
+  <text x="1470" y="723" class="mono">restrictions_text, cofinancing_required, cofinancing_text</text>
+  <text x="1470" y="746" class="mono">consortium_required, consortium_text</text>
+  <text x="1470" y="769" class="mono">implementation_period_text, contact_text, documents</text>
+
+  <text x="1470" y="805" class="label">Extraction / review metadata</text>
+  <text x="1470" y="830" class="mono">source_metadata, extraction_method, extraction_confidence</text>
+  <text x="1470" y="853" class="mono">extraction_metadata, needs_manual_review, manual_review_reason</text>
+
+  <text x="1470" y="889" class="label">Embeddings</text>
+  <text x="1470" y="914" class="mono">embedding, embedding_text, embedding_model, embedded_at</text>
+
+  <text x="1470" y="951" class="small">`extraction_metadata.feature_card` дублює головні поля у компактній картці:</text>
+  <text x="1470" y="974" class="small">title, summary, status, deadline, program, funder, funding, countries,</text>
+  <text x="1470" y="997" class="small">applicant_types, topics, needs_manual_review, manual_review_reason.</text>
+
+  <path class="flow" d="M400 570 C400 605 400 605 400 625"/>
+  <path class="flow" d="M1800 570 C1800 595 1450 595 1450 625"/>
+  <path class="flow" d="M730 760 L770 760"/>
+
+  <!-- Extraction rules -->
+  <rect x="70" y="1100" width="1010" height="365" class="panel panel-purple"/>
+  <text x="100" y="1137" class="head">6. Stage 5 extraction: як поля витягуються</text>
+  <text x="100" y="1172" class="label">Вхід для extraction</text>
+  <text x="100" y="1197" class="text">Draft fields + `raw_text` + `raw_html` + `raw_payload`. Текст чиститься через `clean_text`.</text>
+  <text x="100" y="1230" class="label">Rules / heuristics</text>
+  <text x="100" y="1255" class="text">Title: normalize title, fallback із URL для generic titles.</text>
+  <text x="100" y="1278" class="text">Summary: будується з source text, якщо summary короткий або відсутній.</text>
+  <text x="100" y="1301" class="text">Deadline/status: parse datetime/deadline; status з source або з deadline; Diia open-ended =&gt; open.</text>
+  <text x="100" y="1324" class="text">Funding: amount/currency patterns або source payload; фільтри проти fake IDs/KVED/year values.</text>
+  <text x="100" y="1347" class="text">Opportunity/support type: grant, business_support, loan, guarantee, leasing, tender_support.</text>
+  <text x="100" y="1370" class="text">Applicant types: SME, startup, company, NGO, consortium за keyword rules.</text>
+  <text x="100" y="1393" class="text">Topics: AI, defence, dual-use, innovation, community, business support, education, culture, humanitarian.</text>
+  <text x="100" y="1416" class="text">Countries: Ukraine, EU, Poland, Germany, Moldova, Georgia, Belarus за country rules.</text>
+  <text x="100" y="1439" class="text">Snippets: eligibility, restrictions, cofinancing, consortium, implementation period, contact.</text>
+
+  <rect x="1120" y="1100" width="1010" height="365" class="panel panel-purple"/>
+  <text x="1150" y="1137" class="head">7. Extraction quality fields</text>
+  <text x="1150" y="1172" class="label">Confidence score</text>
+  <text x="1150" y="1197" class="text">Починається з 0.20 і додає бали за якісні поля:</text>
+  <text x="1150" y="1220" class="text">title, long text, summary, deadline, funding, applicant_types, topics, eligibility, restrictions.</text>
+  <text x="1150" y="1254" class="label">Manual review</text>
+  <text x="1150" y="1279" class="text">`needs_manual_review=true`, якщо title generic, extracted text дуже короткий,</text>
+  <text x="1150" y="1302" class="text">або немає topics і applicant_types.</text>
+  <text x="1150" y="1336" class="label">LLM enrichment</text>
+  <text x="1150" y="1361" class="text">Optional `--use-llm` додає summary, eligibility, restrictions, applicant_types, topics.</text>
+  <text x="1150" y="1384" class="text">LLM має брати тільки факти з raw source text.</text>
+  <text x="1150" y="1418" class="label">Evidence</text>
+  <text x="1150" y="1443" class="text">`extraction_metadata.fields` зберігає method, confidence і evidence для полів.</text>
+
+  <path class="flow" d="M1450 1045 C1450 1080 575 1070 575 1100"/>
+  <path class="flow" d="M1080 1283 L1120 1283"/>
+
+  <!-- Client and matching -->
+  <rect x="70" y="1510" width="660" height="165" class="panel panel-red"/>
+  <text x="100" y="1547" class="head">8. ClientProfile fields для matching</text>
+  <text x="100" y="1582" class="mono">id, name, slug, country, sector, organization_type</text>
+  <text x="100" y="1605" class="mono">technologies, product_description, risks</text>
+  <text x="100" y="1628" class="mono">target_topics, excluded_topics, previous_submissions_summary</text>
+  <text x="100" y="1651" class="mono">source_type, source_uri, profile_metadata, enabled</text>
+
+  <rect x="770" y="1510" width="660" height="165" class="panel panel-red"/>
+  <text x="800" y="1547" class="head">9. ApplicationHistory fields для matching</text>
+  <text x="800" y="1582" class="mono">client_profile_id, grant_id, client_name, grant_title</text>
+  <text x="800" y="1605" class="mono">grant_source, program_name, application_date, result</text>
+  <text x="800" y="1628" class="mono">country, applicant_type, topics, project_summary</text>
+  <text x="800" y="1651" class="mono">reusable_materials, similarity_weight, notes, history_metadata</text>
+
+  <rect x="1470" y="1510" width="660" height="165" class="panel panel-dark"/>
+  <text x="1500" y="1547" class="head">10. Matching outputs</text>
+  <text x="1500" y="1582" class="mono">MatchRun: name, run_type, status, parameters, notes</text>
+  <text x="1500" y="1605" class="mono">GrantClientMatch: score, rank, hard_filter_passed</text>
+  <text x="1500" y="1628" class="mono">filter_reasons, keyword_score, vector_score, history_score, llm_score</text>
+  <text x="1500" y="1651" class="mono">explanation, risks_text, manual_checks, evidence, match_metadata</text>
+
+  <!-- Matching details overlay -->
+  <rect x="70" y="925" width="660" height="120" class="panel panel-dark"/>
+  <text x="100" y="962" class="head">Matching uses grant fields</text>
+  <text x="100" y="995" class="text">Hard filters: status, deadline_at, countries, applicant_types, restrictions_text, opportunity_type, support_type.</text>
+  <text x="100" y="1019" class="text">Keyword score: topics, keywords, applicant_types, title, summary, description_text, eligibility_text.</text>
+
+  <rect x="70" y="1465" width="2060" height="2" fill="#d8dee9"/>
+  <path class="flow" d="M740 1593 L770 1593"/>
+  <path class="flow" d="M1430 1593 L1470 1593"/>
+  <path class="flow" d="M400 1510 C400 1485 400 1485 400 1465"/>
+  <path class="flow" d="M1100 1510 C1100 1485 1100 1485 1100 1465"/>
+  <path class="flow" d="M1800 1510 C1800 1485 1800 1485 1800 1465"/>
+
+  <rect x="770" y="925" width="1360" height="120" class="panel panel-dark"/>
+  <text x="800" y="962" class="head">Scoring logic коротко</text>
+  <text x="800" y="995" class="text">Stage 6 score = keyword_score * 0.75 + history_score * 0.25 + extraction confidence bonus - manual check/exclusion penalties.</text>
+  <text x="800" y="1019" class="text">Stage 7 vector run додає vector_score і бере max(stage6_fallback_score, vector_blended_score).</text>
+
+  <path class="flow" d="M1450 1045 C1450 1080 1800 1430 1800 1510"/>
+
+  <text x="1100" y="1700" text-anchor="middle" class="small">Dashboard читає вже готові DB поля: grants, clients, matches, explanations, risks, manual checks, latest jobs. Dashboard не змінює extraction/matching logic.</text>
+</svg>
