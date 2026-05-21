@@ -17,7 +17,9 @@
 - Stage 7 embeddings через local hash provider або OpenAI.
 - Stage 8 match explanations через local rule provider або OpenAI.
 - Stage 9 dashboard pages.
-- Celery worker/beat services підготовлені через Docker Compose profiles.
+
+Mind map реалізованих stage-ів: [`implemented_stages_mindmap.svg`](implemented_stages_mindmap.svg).
+Схема полів grant extraction/matching: [`grant_fields_extraction_map.uk.svg`](grant_fields_extraction_map.uk.svg).
 
 ## Основний спосіб запуску
 
@@ -260,25 +262,6 @@ docker compose exec app grant-tool explain-matches --limit 20 --provider openai
 ```
 
 OpenAI embedding/explanation commands require `OPENAI_API_KEY` in `.env`.
-
-## Worker And Scheduler
-
-Worker і scheduler підготовлені через Docker Compose profiles, але основний MVP flow зараз запускається через CLI commands.
-
-Запуск з worker і scheduler:
-
-```bash
-docker compose --profile worker --profile scheduler up --build
-```
-
-Ця команда запускає:
-
-- `migrate`
-- `app`
-- `db`
-- `redis`
-- `worker`
-- `beat`
 
 ## Logs And Status
 

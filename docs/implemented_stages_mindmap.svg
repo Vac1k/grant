@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1280" viewBox="0 0 1800 1280" role="img" aria-labelledby="title desc">
+  <title id="title">AI Grant Matching Tool implemented stages mind map</title>
+  <desc id="desc">Mind map of implemented MVP stages from local runtime through dashboard.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#42526e"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#1f2937" flood-opacity="0.16"/>
+    </filter>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .title { font-family: Arial, sans-serif; font-size: 38px; font-weight: 700; fill: #172b4d; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 20px; fill: #5e6c84; }
+      .center { fill: #172b4d; }
+      .center-text { font-family: Arial, sans-serif; font-size: 25px; font-weight: 700; fill: #ffffff; }
+      .center-small { font-family: Arial, sans-serif; font-size: 17px; fill: #dfe6f4; }
+      .node { fill: #ffffff; stroke-width: 2.2; filter: url(#shadow); }
+      .stage { font-family: Arial, sans-serif; font-size: 21px; font-weight: 700; }
+      .body { font-family: Arial, sans-serif; font-size: 16px; fill: #253858; }
+      .hint { font-family: Arial, sans-serif; font-size: 14px; fill: #6b778c; }
+      .line { fill: none; stroke: #42526e; stroke-width: 2.6; marker-end: url(#arrow); }
+      .branch { fill: none; stroke: #b3bac5; stroke-width: 2; }
+      .s1 { stroke: #2563eb; }
+      .s1t { fill: #1d4ed8; }
+      .s2 { stroke: #0f766e; }
+      .s2t { fill: #0f766e; }
+      .s25 { stroke: #7c3aed; }
+      .s25t { fill: #6d28d9; }
+      .s3 { stroke: #c2410c; }
+      .s3t { fill: #c2410c; }
+      .s4 { stroke: #be123c; }
+      .s4t { fill: #be123c; }
+      .s5 { stroke: #15803d; }
+      .s5t { fill: #15803d; }
+      .s6 { stroke: #b45309; }
+      .s6t { fill: #b45309; }
+      .s7 { stroke: #0369a1; }
+      .s7t { fill: #0369a1; }
+      .s8 { stroke: #9333ea; }
+      .s8t { fill: #7e22ce; }
+      .s9 { stroke: #334155; }
+      .s9t { fill: #334155; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1800" height="1280"/>
+  <text x="900" y="64" text-anchor="middle" class="title">AI Grant Matching Tool - Implemented MVP Stages</text>
+  <text x="900" y="96" text-anchor="middle" class="subtitle">Only implemented stages are shown: runtime, data, ingestion, import, extraction, matching, embeddings, explanations, dashboard.</text>
+
+  <rect x="690" y="150" width="420" height="128" rx="16" class="center" filter="url(#shadow)"/>
+  <text x="900" y="198" text-anchor="middle" class="center-text">Implemented MVP Flow</text>
+  <text x="900" y="230" text-anchor="middle" class="center-small">Docker Compose + CLI jobs + dashboard</text>
+  <text x="900" y="255" text-anchor="middle" class="center-small">Raw data -> features -> matches -> explanations</text>
+
+  <path class="branch" d="M900 278 C900 330 310 310 310 365"/>
+  <path class="branch" d="M900 278 C900 330 740 310 740 365"/>
+  <path class="branch" d="M900 278 C900 330 1160 310 1160 365"/>
+  <path class="branch" d="M900 278 C900 330 1490 310 1490 365"/>
+
+  <g id="stage-1">
+    <rect x="80" y="360" width="420" height="150" rx="12" class="node s1"/>
+    <text x="110" y="398" class="stage s1t">Stage 1 - Local Runtime</text>
+    <text x="110" y="431" class="body">FastAPI app, health route, Dockerfile.</text>
+    <text x="110" y="456" class="body">Docker Compose starts app, db, redis, migrate.</text>
+    <text x="110" y="481" class="body">`.env`, Poetry deps, one-command local start.</text>
+  </g>
+
+  <g id="stage-2">
+    <rect x="530" y="360" width="420" height="150" rx="12" class="node s2"/>
+    <text x="560" y="398" class="stage s2t">Stage 2 - Data Model</text>
+    <text x="560" y="431" class="body">SQLAlchemy models and Alembic migrations.</text>
+    <text x="560" y="456" class="body">Sources, raw snapshots, grants, clients.</text>
+    <text x="560" y="481" class="body">Match runs, match results, reports.</text>
+  </g>
+
+  <g id="stage-25">
+    <rect x="980" y="360" width="420" height="150" rx="12" class="node s25"/>
+    <text x="1010" y="398" class="stage s25t">Stage 2.5 - Jobs And Sources</text>
+    <text x="1010" y="431" class="body">`JobRun` tracks status, counters, errors.</text>
+    <text x="1010" y="456" class="body">Seeds EU, Prostir, Diia Business, GURT.</text>
+    <text x="1010" y="481" class="body">CLI: seed sources, list/show jobs.</text>
+  </g>
+
+  <g id="stage-3">
+    <rect x="1430" y="360" width="320" height="205" rx="12" class="node s3"/>
+    <text x="1460" y="398" class="stage s3t">Stage 3 - Ingestion</text>
+    <text x="1460" y="431" class="body">Connector framework + 4 MVP sources.</text>
+    <text x="1460" y="456" class="body">Fetch API/RSS/HTML source data.</text>
+    <text x="1460" y="481" class="body">Save `RawGrantSnapshot` first.</text>
+    <text x="1460" y="506" class="body">Upsert `Grant` by source identity.</text>
+    <text x="1460" y="531" class="hint">Fields: title, URL, status, summary,</text>
+    <text x="1460" y="552" class="hint">text, dates, funding, docs, metadata.</text>
+  </g>
+
+  <g id="stage-4">
+    <rect x="80" y="645" width="420" height="185" rx="12" class="node s4"/>
+    <text x="110" y="683" class="stage s4t">Stage 4 - Client Data Import</text>
+    <text x="110" y="716" class="body">Manual CSV import for clients and history.</text>
+    <text x="110" y="741" class="body">Clients: country, sector, org type, tech.</text>
+    <text x="110" y="766" class="body">Topics, exclusions, product, risks.</text>
+    <text x="110" y="791" class="body">History: result, topics, reusable materials.</text>
+    <text x="110" y="812" class="hint">History result is context, not a penalty.</text>
+  </g>
+
+  <g id="stage-5">
+    <rect x="530" y="645" width="420" height="185" rx="12" class="node s5"/>
+    <text x="560" y="683" class="stage s5t">Stage 5 - Feature Extraction</text>
+    <text x="560" y="716" class="body">Turns raw grant text into feature cards.</text>
+    <text x="560" y="741" class="body">Normalizes deadline, status, funding.</text>
+    <text x="560" y="766" class="body">Extracts countries, applicant types, topics.</text>
+    <text x="560" y="791" class="body">Eligibility, restrictions, confidence, review.</text>
+    <text x="560" y="812" class="hint">Optional OpenAI enrichment is implemented.</text>
+  </g>
+
+  <g id="stage-6">
+    <rect x="980" y="645" width="420" height="185" rx="12" class="node s6"/>
+    <text x="1010" y="683" class="stage s6t">Stage 6 - Shortlist Matching</text>
+    <text x="1010" y="716" class="body">Hard filters remove expired/mismatched grants.</text>
+    <text x="1010" y="741" class="body">Keyword score uses topics, tech, sector.</text>
+    <text x="1010" y="766" class="body">History score boosts similar past work.</text>
+    <text x="1010" y="791" class="body">Saves `MatchRun` and `GrantClientMatch`.</text>
+    <text x="1010" y="812" class="hint">Evidence and score breakdown are persisted.</text>
+  </g>
+
+  <g id="stage-7">
+    <rect x="1430" y="645" width="320" height="185" rx="12" class="node s7"/>
+    <text x="1460" y="683" class="stage s7t">Stage 7 - Embeddings</text>
+    <text x="1460" y="716" class="body">Builds profile text for grants,</text>
+    <text x="1460" y="741" class="body">clients and application history.</text>
+    <text x="1460" y="766" class="body">Stores pgvector embeddings.</text>
+    <text x="1460" y="791" class="body">Adds `vector_score` to matching.</text>
+    <text x="1460" y="812" class="hint">Providers: local hash and OpenAI.</text>
+  </g>
+
+  <g id="stage-8">
+    <rect x="440" y="950" width="420" height="185" rx="12" class="node s8"/>
+    <text x="470" y="988" class="stage s8t">Stage 8 - Explanations</text>
+    <text x="470" y="1021" class="body">Explains saved matches, not raw candidates.</text>
+    <text x="470" y="1046" class="body">Uses grant card, client card, history, evidence.</text>
+    <text x="470" y="1071" class="body">Writes explanation, risks, manual checks.</text>
+    <text x="470" y="1096" class="body">Stores LLM metadata on match records.</text>
+    <text x="470" y="1117" class="hint">Providers: rule and OpenAI.</text>
+  </g>
+
+  <g id="stage-9">
+    <rect x="940" y="950" width="420" height="185" rx="12" class="node s9"/>
+    <text x="970" y="988" class="stage s9t">Stage 9 - Dashboard</text>
+    <text x="970" y="1021" class="body">Read-only Jinja dashboard with CSS.</text>
+    <text x="970" y="1046" class="body">Pages: overview, grants, clients, matches.</text>
+    <text x="970" y="1071" class="body">Report view shows recent grants, matches, checks.</text>
+    <text x="970" y="1096" class="body">Filters by source, status, topic, score.</text>
+    <text x="970" y="1117" class="hint">Reads normalized DB state; no new scoring.</text>
+  </g>
+
+  <path class="line" d="M500 435 L530 435"/>
+  <path class="line" d="M950 435 L980 435"/>
+  <path class="line" d="M1400 435 L1430 435"/>
+  <path class="line" d="M1590 565 C1590 610 295 600 295 645"/>
+  <path class="line" d="M500 737 L530 737"/>
+  <path class="line" d="M950 737 L980 737"/>
+  <path class="line" d="M1400 737 L1430 737"/>
+  <path class="line" d="M1590 830 C1590 920 650 865 650 950"/>
+  <path class="line" d="M860 1042 L940 1042"/>
+
+  <text x="900" y="1225" text-anchor="middle" class="hint">Operational path: start stack -> import client data -> ingest grants -> extract features -> embed -> match -> explain -> review dashboard.</text>
+</svg>

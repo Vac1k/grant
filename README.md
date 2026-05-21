@@ -2,7 +2,7 @@
 
 AI Grant Matching Tool is an internal web tool for discovering, normalizing, and matching grant opportunities with client or project profiles.
 
-The goal is to reduce manual grant research work. The system will collect new and updated grants, extract structured features, compare them with client profiles, account for previous application history, and generate clear reports with top matches, risks, and manual review notes.
+The goal is to reduce manual grant research work. The implemented MVP collects grant data, stores raw snapshots, extracts structured features, compares grants with client profiles, accounts for previous application history, explains top matches, and shows the results in an internal dashboard.
 
 ## MVP Scope
 
@@ -13,11 +13,13 @@ The first MVP focuses on these grant sources:
 - GURT grants
 - Diia Business finance programs
 
-The first version uses local structured files for client data:
+The MVP uses local structured files for client data:
 
 - `CSV` client profiles
 - separate `CSV` application history
-- Google Drive integration is deferred to a later stage
+
+Implemented stages mind map: [`docs/implemented_stages_mindmap.svg`](docs/implemented_stages_mindmap.svg).
+Grant fields and extraction map: [`docs/grant_fields_extraction_map.uk.svg`](docs/grant_fields_extraction_map.uk.svg).
 
 ## Local Start
 
@@ -77,7 +79,7 @@ The system follows this flow:
 4. Load client profiles and application history.
 5. Match grants to clients using hard filters, keyword scoring, vector similarity, and application history boost.
 6. Use an LLM to extract missing or unclear fields and explain top matches.
-7. Show results in the dashboard and daily report.
+7. Show results in the dashboard report view.
 
 Previous applications to similar grants are treated as a positive relevance signal regardless of outcome. `lost`, `rejected`, or `not_submitted` outcomes do not reduce the fit score, but they may create manual review notes.
 
@@ -88,7 +90,8 @@ Previous applications to similar grants are treated as a positive relevance sign
 - Dashboard: `Jinja2` + `HTMX`
 - Database: `PostgreSQL` + `pgvector`
 - ORM and migrations: `SQLAlchemy 2` + `Alembic`
-- Jobs: `Celery` + `Redis`
+- Jobs: CLI commands with `JobRun` audit records
+- Broker/cache service in local stack: `Redis`
 - AI provider: OpenAI
 - Dependency management: Poetry
 - Local runtime: Docker Compose
