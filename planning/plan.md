@@ -452,6 +452,39 @@ Stage 8 commands:
   - ризики
   - що треба перевірити вручну
 
+Статус реалізації Stage 9: done for MVP.
+
+- Додано `grant_tool/dashboard`.
+- Додано `DashboardService` як read-only query/aggregation layer.
+- `/` тепер відкриває web dashboard.
+- Додано pages:
+  - `/` overview;
+  - `/grants`;
+  - `/clients`;
+  - `/matches`;
+  - `/report`.
+- Додано static CSS без frontend build step:
+  - `/static/css/dashboard.css`.
+- Dashboard показує:
+  - stats по grants/clients/matches/sources;
+  - status/source distribution;
+  - latest jobs;
+  - recent grants;
+  - grant cards з filters;
+  - client feature cards;
+  - ranked matches зі score breakdown;
+  - Stage 8 explanations/risks/manual checks;
+  - report-style working view.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage9_dashboard -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests migrations`
+- Docker HTTP smoke для `/`, `/grants`, `/clients`, `/matches`, `/report`, `/static/css/dashboard.css`.
+
+Важливо: Stage 9 є read-only UI layer. Він не змінює matching/extraction logic і не підганяє систему під поточні grants у локальній DB.
+
 ## Automation
 
 - Docker Compose startup має бути one-command:

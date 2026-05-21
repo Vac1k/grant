@@ -1,6 +1,6 @@
 # App Operations Cheatsheet
 
-This file contains the commands used during Stage 2-8 implementation and testing.
+This file contains the commands used during Stage 2-9 implementation and testing.
 Run all commands from the project directory:
 
 ```bash
@@ -210,6 +210,34 @@ Check saved explanations:
 ```bash
 docker compose exec db psql -U grant -d grant -c "select c.slug client, m.rank, m.score, m.llm_score, left(g.title, 80) grant_title, left(m.explanation, 180) explanation, left(m.risks_text, 180) risks from grant_client_matches m join client_profiles c on c.id=m.client_profile_id join grants g on g.id=m.grant_id where m.explanation is not null order by m.updated_at desc limit 20;"
 ```
+
+## Open Stage 9 Dashboard
+
+After `docker compose up`, open:
+
+```text
+http://localhost:8000/
+```
+
+Dashboard pages:
+
+```text
+http://localhost:8000/
+http://localhost:8000/grants
+http://localhost:8000/clients
+http://localhost:8000/matches
+http://localhost:8000/report
+```
+
+Quick HTTP smoke:
+
+```bash
+curl -s -o /tmp/grant_dashboard_home.html -w "%{http_code} %{content_type}\n" http://localhost:8000/
+curl -s -o /tmp/grant_dashboard_grants.html -w "%{http_code} %{content_type}\n" http://localhost:8000/grants
+curl -s -o /tmp/grant_dashboard_css.css -w "%{http_code} %{content_type}\n" http://localhost:8000/static/css/dashboard.css
+```
+
+Expected result: `200 text/html` for pages and `200 text/css` for CSS.
 
 ## Inspect Saved Grant Fields
 

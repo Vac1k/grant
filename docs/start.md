@@ -52,7 +52,11 @@ docker compose up
 
 Після запуску app буде доступний тут:
 
-- app: `http://localhost:8000`
+- dashboard: `http://localhost:8000`
+- grants: `http://localhost:8000/grants`
+- clients: `http://localhost:8000/clients`
+- matches: `http://localhost:8000/matches`
+- report: `http://localhost:8000/report`
 - health: `http://localhost:8000/api/v1/health`
 - OpenAPI docs: `http://localhost:8000/docs`
 

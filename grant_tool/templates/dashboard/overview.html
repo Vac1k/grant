@@ -1,0 +1,168 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Overview | AI Grant Matching Tool{% endblock %}
+{% block eyebrow %}Operational Overview{% endblock %}
+{% block heading %}Grant pipeline status{% endblock %}
+
+{% block content %}
+<section class="metric-grid">
+  <article class="metric accent-blue">
+    <span>Total grants</span>
+    <strong>{{ stats.grants_total }}</strong>
+    <small>{{ stats.grants_open }} open or active</small>
+  </article>
+  <article class="metric accent-green">
+    <span>New this week</span>
+    <strong>{{ stats.grants_new }}</strong>
+    <small>{{ stats.grants_manual_review }} need review</small>
+  </article>
+  <article class="metric accent-amber">
+    <span>Clients</span>
+    <strong>{{ stats.clients_total }}</strong>
+    <small>{{ stats.sources_total }} enabled sources</small>
+  </article>
+  <article class="metric accent-red">
+    <span>Matches</span>
+    <strong>{{ stats.matches_total }}</strong>
+    <small>{{ stats.explained_matches }} explained</small>
+  </article>
+</section>
+
+<section class="two-column">
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Distribution</p>
+        <h2>Grant status</h2>
+      </div>
+      <a href="/grants">Open list</a>
+    </div>
+    <div class="stack">
+      {% for status, count in status_counts %}
+      <div class="distribution-row">
+        <span>{{ status }}</span>
+        <strong>{{ count }}</strong>
+      </div>
+      {% else %}
+      <p class="empty">No grants yet.</p>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Sources</p>
+        <h2>Ingestion coverage</h2>
+      </div>
+      <a href="/grants">Filter</a>
+    </div>
+    <div class="stack">
+      {% for source, count in source_counts %}
+      <div class="distribution-row">
+        <span>{{ source }}</span>
+        <strong>{{ count }}</strong>
+      </div>
+      {% else %}
+      <p class="empty">No source data yet.</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Recent data</p>
+      <h2>Latest grants</h2>
+    </div>
+    <a href="/grants">All grants</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Grant</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Deadline</th>
+          <th>Topics</th>
+          <th>Review</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for grant in recent_grants %}
+        <tr>
+          <td>
+            <a class="strong-link" href="{{ grant.source_url }}" target="_blank" rel="noreferrer">{{ grant.title }}</a>
+            <small>{{ grant.summary or grant.funder_name or "" }}</small>
+          </td>
+          <td>{{ grant.source.slug if grant.source else "-" }}</td>
+          <td><span class="pill status-{{ grant.status }}">{{ grant.status }}</span></td>
+          <td>{{ grant.deadline_text or (grant.deadline_at.date() if grant.deadline_at else "unknown") }}</td>
+          <td>
+            <div class="tag-row">
+              {% for topic in grant.topics[:3] %}
+              <span class="tag">{{ topic }}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>{{ "yes" if grant.needs_manual_review else "no" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No grants have been ingested yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="two-column">
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Matching</p>
+        <h2>Top matches by client</h2>
+      </div>
+      <a href="/matches">Open matches</a>
+    </div>
+    <div class="stack">
+      {% for client_name, matches in top_matches_by_client.items() %}
+      <div class="match-group">
+        <h3>{{ client_name }}</h3>
+        {% for match in matches %}
+        <a class="match-row" href="/matches?client={{ match.client_profile.slug }}">
+          <span>{{ match.grant.title }}</span>
+          <strong>{{ "%.2f"|format(match.score|float) }}</strong>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty">No matches yet. Run matching first.</p>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Jobs</p>
+        <h2>Latest runs</h2>
+      </div>
+    </div>
+    <div class="job-list">
+      {% for job in latest_jobs %}
+      <div class="job-row">
+        <span class="pill status-{{ job.status }}">{{ job.status }}</span>
+        <div>
+          <strong>{{ job.job_type }}</strong>
+          <small>{{ job.source.slug if job.source else "global" }} · processed {{ job.processed_count }} · failed {{ job.failed_count }}</small>
+        </div>
+      </div>
+      {% else %}
+      <p class="empty">No jobs yet.</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

@@ -1196,6 +1196,71 @@ Docker smoke на поточній DB:
 - Інструментом можна користуватись через браузер.
 - Не потрібно працювати тільки через CLI або database.
 
+Статус реалізації Stage 9: done for MVP.
+
+Фактично зроблено:
+
+- Додано package `grant_tool/dashboard`.
+- Додано `DashboardService` для read-only aggregation/query layer.
+- Root route `/` тепер відкриває dashboard, а не JSON system response.
+- Static assets доступні через `/static`.
+- Додано Jinja templates:
+  - `dashboard/base.html`;
+  - `dashboard/overview.html`;
+  - `dashboard/grants.html`;
+  - `dashboard/clients.html`;
+  - `dashboard/matches.html`;
+  - `dashboard/report.html`.
+- Додано CSS `grant_tool/static/css/dashboard.css`.
+- Overview page показує:
+  - total/open/new grants;
+  - manual review queue;
+  - clients;
+  - matches/explained matches;
+  - source/status distribution;
+  - latest jobs;
+  - recent grants;
+  - top matches by client.
+- Grants page показує cards зі source URL, status, deadline, funding, applicant types, topics, extraction confidence і manual review marker.
+- Grants page має filters:
+  - search;
+  - source;
+  - status;
+  - topic;
+  - manual review.
+- Clients page показує client feature card: country, org type, sector, technologies, target topics, history count, embedding model, risks.
+- Matches page показує top matches з:
+  - final score;
+  - keyword/vector/history/LLM scores;
+  - explanation;
+  - risks;
+  - manual checks;
+  - source link.
+- Report page показує practical daily working view:
+  - recent grants;
+  - top matches by client;
+  - manual check queue;
+  - latest saved report, якщо він є в DB.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage9_dashboard -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests migrations`
+- Docker HTTP smoke:
+  - `http://localhost:8000/` -> `200 text/html`
+  - `http://localhost:8000/grants` -> `200 text/html`
+  - `http://localhost:8000/clients` -> `200 text/html`
+  - `http://localhost:8000/matches` -> `200 text/html`
+  - `http://localhost:8000/report` -> `200 text/html`
+  - `http://localhost:8000/static/css/dashboard.css` -> `200 text/css`
+
+Важливо:
+
+- Stage 9 не додає нову matching logic і не підганяється під поточну DB.
+- Dashboard тільки читає вже нормалізовані grants, clients, matches, explanations і job history.
+- Це internal MVP dashboard без auth; auth залишається для deployment/future stage.
+
 ## Stage 10: Daily report і automation
 
 Ціль: автоматизувати регулярне оновлення і щоденний report.

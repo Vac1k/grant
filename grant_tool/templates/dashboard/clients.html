@@ -1,0 +1,66 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Clients | AI Grant Matching Tool{% endblock %}
+{% block eyebrow %}Client Profiles{% endblock %}
+{% block heading %}Companies and grant history{% endblock %}
+
+{% block content %}
+<section class="client-grid">
+  {% for client in clients %}
+  <article class="client-card">
+    <div class="card-topline">
+      <span class="pill source-pill">{{ client.country or "country unknown" }}</span>
+      <span class="pill">{{ client.organization_type or "type unknown" }}</span>
+    </div>
+    <h2>{{ client.name }}</h2>
+    <p>{{ client.product_description or client.previous_submissions_summary or "No profile description yet." }}</p>
+    <dl class="compact-facts">
+      <div>
+        <dt>Sector</dt>
+        <dd>{{ client.sector or "unknown" }}</dd>
+      </div>
+      <div>
+        <dt>History</dt>
+        <dd>{{ client.application_history|length }} records</dd>
+      </div>
+      <div>
+        <dt>Embedding</dt>
+        <dd>{{ client.embedding_model or "not generated" }}</dd>
+      </div>
+    </dl>
+    <div class="tag-section">
+      <span>Technologies</span>
+      <div class="tag-row">
+        {% for item in client.technologies[:8] %}
+        <span class="tag">{{ item }}</span>
+        {% else %}
+        <span class="muted">none</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="tag-section">
+      <span>Target topics</span>
+      <div class="tag-row">
+        {% for item in client.target_topics[:8] %}
+        <span class="tag green">{{ item }}</span>
+        {% else %}
+        <span class="muted">none</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% if client.risks %}
+    <div class="note-block">
+      <strong>Risks</strong>
+      <p>{{ client.risks }}</p>
+    </div>
+    {% endif %}
+    <a class="inline-button" href="/matches?client={{ client.slug }}">Open matches</a>
+  </article>
+  {% else %}
+  <article class="panel empty-state">
+    <h2>No clients imported</h2>
+    <p>Import client profiles before running matching.</p>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

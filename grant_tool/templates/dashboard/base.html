@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}AI Grant Matching Tool{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">G</span>
+        <span>
+          <strong>Grant Tool</strong>
+          <small>AI matching dashboard</small>
+        </span>
+      </a>
+      <nav class="nav">
+        <a class="{{ 'active' if active_page == 'overview' else '' }}" href="/">Overview</a>
+        <a class="{{ 'active' if active_page == 'grants' else '' }}" href="/grants">Grants</a>
+        <a class="{{ 'active' if active_page == 'clients' else '' }}" href="/clients">Clients</a>
+        <a class="{{ 'active' if active_page == 'matches' else '' }}" href="/matches">Matches</a>
+        <a class="{{ 'active' if active_page == 'report' else '' }}" href="/report">Report</a>
+      </nav>
+      <div class="sidebar-status">
+        <span class="status-dot"></span>
+        <span>Local Docker app</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">{% block eyebrow %}Dashboard{% endblock %}</p>
+          <h1>{% block heading %}Grant intelligence workspace{% endblock %}</h1>
+        </div>
+        <div class="topbar-actions">
+          <a class="ghost-button" href="/docs">API docs</a>
+          <a class="primary-button" href="/report">Daily view</a>
+        </div>
+      </header>
+
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

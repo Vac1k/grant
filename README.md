@@ -41,6 +41,14 @@ Use `docker compose down -v` only when you want to delete the local PostgreSQL v
 Detailed commands live in [`docs/start.md`](docs/start.md).
 The day-to-day operations cheatsheet is [`docs/operations.md`](docs/operations.md).
 
+After startup, the dashboard is available at:
+
+- `http://localhost:8000/`
+- `http://localhost:8000/grants`
+- `http://localhost:8000/clients`
+- `http://localhost:8000/matches`
+- `http://localhost:8000/report`
+
 ## Ingestion
 
 Stage 3 ingestion and Stage 5 feature extraction are available through the CLI:

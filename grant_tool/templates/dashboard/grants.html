@@ -1,0 +1,96 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Grants | AI Grant Matching Tool{% endblock %}
+{% block eyebrow %}Grant Database{% endblock %}
+{% block heading %}Ingested grant opportunities{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <form class="filters" method="get" action="/grants">
+    <label>
+      <span>Search</span>
+      <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="title, funder, summary">
+    </label>
+    <label>
+      <span>Source</span>
+      <select name="source">
+        <option value="">All sources</option>
+        {% for source in sources %}
+        <option value="{{ source.slug }}" {{ "selected" if filters.source == source.slug else "" }}>{{ source.slug }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Status</span>
+      <select name="status">
+        <option value="">Any status</option>
+        {% for option in ["open", "active", "upcoming", "unknown", "closed"] %}
+        <option value="{{ option }}" {{ "selected" if filters.status == option else "" }}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Topic</span>
+      <select name="topic">
+        <option value="">Any topic</option>
+        {% for item in topics %}
+        <option value="{{ item }}" {{ "selected" if filters.topic == item else "" }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Manual review</span>
+      <select name="manual_review">
+        <option value="">Any</option>
+        <option value="true" {{ "selected" if filters.manual_review is sameas true else "" }}>Needed</option>
+        <option value="false" {{ "selected" if filters.manual_review is sameas false else "" }}>Clean</option>
+      </select>
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+</section>
+
+<section class="grant-grid">
+  {% for grant in grants %}
+  <article class="grant-card">
+    <div class="card-topline">
+      <span class="pill source-pill">{{ grant.source.slug if grant.source else "source" }}</span>
+      <span class="pill status-{{ grant.status }}">{{ grant.status }}</span>
+    </div>
+    <h2><a href="{{ grant.source_url }}" target="_blank" rel="noreferrer">{{ grant.title }}</a></h2>
+    <p>{{ grant.summary or grant.description_text or grant.eligibility_text or "No summary extracted yet." }}</p>
+    <dl class="compact-facts">
+      <div>
+        <dt>Deadline</dt>
+        <dd>{{ grant.deadline_text or (grant.deadline_at.date() if grant.deadline_at else "unknown") }}</dd>
+      </div>
+      <div>
+        <dt>Funding</dt>
+        <dd>{{ grant.funding_amount_text or "unknown" }} {{ grant.currency or "" }}</dd>
+      </div>
+      <div>
+        <dt>Applicants</dt>
+        <dd>{{ grant.applicant_types[:4]|join(", ") if grant.applicant_types else "unknown" }}</dd>
+      </div>
+      <div>
+        <dt>Confidence</dt>
+        <dd>{{ "%.2f"|format(grant.extraction_confidence|float) if grant.extraction_confidence else "n/a" }}</dd>
+      </div>
+    </dl>
+    <div class="tag-row">
+      {% for topic in grant.topics[:6] %}
+      <span class="tag">{{ topic }}</span>
+      {% endfor %}
+      {% if grant.needs_manual_review %}
+      <span class="tag warn">manual review</span>
+      {% endif %}
+    </div>
+  </article>
+  {% else %}
+  <article class="panel empty-state">
+    <h2>No grants found</h2>
+    <p>Run ingestion or relax filters.</p>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}
