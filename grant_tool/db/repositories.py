@@ -379,6 +379,26 @@ class GrantRepository:
         )
         return list(self.session.scalars(query))
 
+    def list_grants_for_embedding(self, *, limit: int | None = None) -> list[Grant]:
+        query = select(Grant).order_by(Grant.updated_at.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
+    def list_client_profiles_for_embedding(self, *, enabled_only: bool = True, limit: int | None = None) -> list[ClientProfile]:
+        query = select(ClientProfile).order_by(ClientProfile.name)
+        if enabled_only:
+            query = query.where(ClientProfile.enabled.is_(True))
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
+    def list_application_history_for_embedding(self, *, limit: int | None = None) -> list[ApplicationHistory]:
+        query = select(ApplicationHistory).order_by(ApplicationHistory.updated_at.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
     def save_application_history(
         self,
         *,
@@ -472,6 +492,30 @@ class GrantRepository:
         self.session.add(match_run)
         self.session.flush()
         return match_run
+
+    def get_match_run(self, match_run_id: uuid.UUID) -> MatchRun | None:
+        return self.session.get(MatchRun, match_run_id)
+
+    def latest_match_run(self) -> MatchRun | None:
+        return self.session.scalar(select(MatchRun).order_by(MatchRun.started_at.desc()))
+
+    def list_matches_for_explanation(
+        self,
+        *,
+        match_run_id: uuid.UUID,
+        limit: int = 20,
+    ) -> list[GrantClientMatch]:
+        query = (
+            select(GrantClientMatch)
+            .where(GrantClientMatch.match_run_id == match_run_id)
+            .options(
+                selectinload(GrantClientMatch.grant).selectinload(Grant.source),
+                selectinload(GrantClientMatch.client_profile),
+            )
+            .order_by(GrantClientMatch.rank.asc().nullslast(), GrantClientMatch.score.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(query))
 
     def save_match_result(
         self,

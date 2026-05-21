@@ -1018,6 +1018,68 @@ Docker smoke на поточній DB:
 - Попередні подачі допомагають знаходити схожі релевантні гранти навіть тоді, коли попередній результат був програшним.
 - Dashboard може пояснювати, чому match отримав високий або низький score.
 
+Статус реалізації Stage 7: done for MVP.
+
+Фактично зроблено:
+
+- Додано embedding columns у `grants`, `client_profiles`, `application_history`:
+  - `embedding`;
+  - `embedding_text`;
+  - `embedding_model`;
+  - `embedded_at`.
+- Додано migration `20260521_0003_add_embedding_columns`.
+- Додано package `grant_tool/embeddings`.
+- Додано `EmbeddingService`.
+- Додано profile text builders:
+  - grant profile text;
+  - client profile text;
+  - application history profile text.
+- Додано embedding providers:
+  - `hash`: deterministic local provider для tests/offline smoke;
+  - `openai`: real embeddings через OpenAI embeddings API.
+- Додано CLI:
+  - `grant-tool embed --target all --provider hash`;
+  - `grant-tool embed --target grants --provider openai`;
+  - `grant-tool match --use-vector`.
+- `ShortlistMatchingService` тепер може рахувати `vector_score`, якщо embeddings існують.
+- Якщо embeddings відсутні, matching fallback-иться до Stage 6 score.
+- Vector layer не може погіршити Stage 6 fallback score:
+  - final score використовує `max(stage6_score, vector_blended_score)`.
+- `grant_client_matches.vector_score` заповнюється для vector runs.
+- `match_metadata.score_breakdown` містить:
+  - `keyword_score`;
+  - `vector_score`;
+  - `history_score`;
+  - `stage6_fallback_score`;
+  - `final_score`.
+- `evidence.vector` містить similarity evidence.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage7_embeddings -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests migrations`
+- `poetry run grant-tool embed --help`
+- `poetry run grant-tool match --help`
+- `docker compose exec app alembic upgrade head`
+- `docker compose exec app grant-tool embed --target all --provider hash --batch-size 16`
+- `docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector`
+
+Docker smoke на поточній DB:
+
+- embedded grants: 52/52
+- embedded clients: 5/5
+- embedded application history: 12/12
+- vector matching evaluated: 260 grant-client pairs
+- saved: 3
+- filtered: 257
+
+Важливо:
+
+- `hash` embeddings потрібні тільки для deterministic local tests/smoke і не є якісною semantic model.
+- Для реального semantic matching треба запускати `--provider openai`.
+- Stage 7 не підганяє matching під поточні grants; profile text і scoring generic.
+
 ## Stage 8: LLM explanations і risk notes
 
 Ціль: використовувати AI там, де він найбільш корисний для людини.
@@ -1042,6 +1104,55 @@ Docker smoke на поточній DB:
 
 - Користувач бачить не тільки score, а й практичне пояснення.
 - Report стає корисним для грантрайтера або менеджера.
+
+Статус реалізації Stage 8: done for MVP.
+
+Фактично зроблено:
+
+- Додано package `grant_tool/explanations`.
+- Додано `MatchExplanationService`.
+- Додано CLI:
+  - `grant-tool explain-matches --match-run-id <match-run-id> --limit 20 --provider openai`;
+  - `grant-tool explain-matches --limit 20 --provider rule`.
+- Команда за замовчуванням бере latest `MatchRun`, якщо `--match-run-id` не передано.
+- Prompt/payload отримує тільки:
+  - normalized grant profile;
+  - client profile;
+  - relevant application history;
+  - saved deterministic/vector score breakdown;
+  - existing evidence і manual checks.
+- LLM не приймає match decision з нуля; він пояснює вже збережений result.
+- `lost`, `rejected`, `not_submitted` history не трактуються як негативний fit-сигнал.
+- Output записується у `grant_client_matches`:
+  - `explanation`;
+  - `risks_text`;
+  - `manual_checks`;
+  - `llm_score`;
+  - `match_metadata.llm_explanation`.
+- Додано deterministic `rule` provider для local smoke/tests без OpenAI API.
+- Додано OpenAI provider через `OPENAI_API_KEY` і `LLM_MODEL`.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage8_explanations -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests migrations`
+- `poetry run grant-tool explain-matches --help`
+- `docker compose exec app grant-tool explain-matches --match-run-id e27c8092-9cdf-47b9-a1f4-26788a03718b --limit 5 --provider rule`
+- `docker compose exec app grant-tool explain-matches --match-run-id e27c8092-9cdf-47b9-a1f4-26788a03718b --limit 3 --provider openai`
+
+Docker smoke на поточній DB:
+
+- rule provider: processed 5, updated 5, failed 0.
+- OpenAI provider: processed 3, updated 3, failed 0.
+- OpenAI model used: `gpt-4.1-mini`.
+- Output saved into `grant_client_matches`.
+
+Важливо:
+
+- Stage 8 не підганяє логіку під поточну DB.
+- LLM explanation не має змінювати `score`; score генерується Stage 6/7.
+- `llm_score` зараз означає confidence/quality of explanation, а не final match score.
 
 ## Stage 9: Web dashboard
 

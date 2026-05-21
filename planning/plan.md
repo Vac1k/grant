@@ -344,6 +344,80 @@ Stage 6 command:
 - Source-specific або language-specific евристики мають бути конфігурованими rule sets з evidence, а не ad hoc logic.
 - Stage 7 має будувати generic matching architecture, а не оптимізуватись під поточний scrape result.
 
+Статус реалізації Stage 7: done for MVP.
+
+- Додано embedding columns у `grants`, `client_profiles`, `application_history`.
+- Додано migration `20260521_0003_add_embedding_columns`.
+- Додано `grant_tool/embeddings/EmbeddingService`.
+- Додано generic profile text builders для grants, clients і application history.
+- Додано local deterministic `hash` embedding provider для tests/smoke.
+- Додано `openai` embedding provider для реальної semantic якості.
+- Додано CLI:
+  - `grant-tool embed --target all --provider hash`;
+  - `grant-tool embed --target all --provider openai`;
+  - `grant-tool match --use-vector`.
+- Stage 7 заповнює `vector_score` у `grant_client_matches`.
+- `score_breakdown` містить `stage6_fallback_score`, щоб vector layer не міг погіршити Stage 6 result.
+- Якщо embeddings відсутні, matching fallback-иться до Stage 6 behavior.
+
+Stage 7 commands:
+
+- `docker compose exec app alembic upgrade head`
+- `docker compose exec app grant-tool embed --target all --provider hash`
+- `docker compose exec app grant-tool embed --target all --provider openai`
+- `docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector`
+
+Поточний Docker smoke:
+
+- embedded grants: 52/52;
+- embedded clients: 5/5;
+- embedded history: 12/12;
+- vector matching evaluated 260 pairs;
+- saved 3 strict matches.
+
+Важливо: `hash` provider потрібен тільки для deterministic local smoke. Для реальної якості Stage 7 треба запускати OpenAI embeddings.
+
+Статус реалізації Stage 8: done for MVP.
+
+- Додано `grant_tool/explanations/MatchExplanationService`.
+- Додано CLI `grant-tool explain-matches`.
+- Stage 8 бере вже збережений `MatchRun` і top matches, а не рахує match заново.
+- Payload для LLM містить тільки normalized grant card, client profile, relevant application history, score breakdown, evidence і manual checks.
+- LLM не має самостійно вирішувати, чи є match; він пояснює score/evidence зі Stage 6/7.
+- Lost/rejected/not_submitted application history не є негативним fit-сигналом.
+- Output зберігається у `grant_client_matches`:
+  - `explanation`;
+  - `risks_text`;
+  - `manual_checks`;
+  - `llm_score`;
+  - `match_metadata.llm_explanation`.
+- Є два providers:
+  - `rule` для deterministic local smoke/tests;
+  - `openai` для реальних пояснень через `OPENAI_API_KEY` і `LLM_MODEL`.
+
+Stage 8 commands:
+
+- `docker compose exec app grant-tool explain-matches --limit 20 --provider rule`
+- `docker compose exec app grant-tool explain-matches --limit 20 --provider openai`
+- `docker compose exec app grant-tool explain-matches --match-run-id <match-run-id> --limit 20 --provider openai`
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage8_explanations -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests migrations`
+- `poetry run grant-tool explain-matches --help`
+- `docker compose exec app grant-tool explain-matches --match-run-id e27c8092-9cdf-47b9-a1f4-26788a03718b --limit 5 --provider rule`
+- `docker compose exec app grant-tool explain-matches --match-run-id e27c8092-9cdf-47b9-a1f4-26788a03718b --limit 3 --provider openai`
+
+Поточний Docker smoke:
+
+- rule provider processed 5 / updated 5 / failed 0;
+- OpenAI provider processed 3 / updated 3 / failed 0;
+- OpenAI model: `gpt-4.1-mini`.
+
+Важливо: Stage 8 не підганяється під поточні grants у DB. Він пояснює generic score breakdown і evidence, які прийшли зі Stage 6/7.
+
 ## Dashboard
 
 Перший web dashboard має включати:

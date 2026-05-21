@@ -8,6 +8,7 @@ from typing import Any
 
 from grant_tool.db.models import ApplicationHistory, ClientProfile, Grant, MatchRun
 from grant_tool.db.repositories import GrantRepository
+from grant_tool.embeddings import EmbeddingService
 from grant_tool.ingestion.utils import clean_text
 
 
@@ -20,6 +21,7 @@ class MatchCandidate:
     client: ClientProfile
     score: Decimal
     keyword_score: Decimal
+    vector_score: Decimal | None
     history_score: Decimal
     hard_filter_passed: bool
     filter_reasons: list[str]
@@ -49,6 +51,7 @@ class ShortlistMatchingService:
         top_n: int = 10,
         min_score: Decimal | float | int = Decimal("0.2500"),
         name: str | None = None,
+        use_vector: bool = False,
     ) -> MatchingSummary:
         min_score_decimal = self._decimal(min_score)
         clients = self._clients(client_slug=client_slug)
@@ -62,6 +65,7 @@ class ShortlistMatchingService:
                 "grant_limit": grant_limit,
                 "top_n": top_n,
                 "min_score": str(min_score_decimal),
+                "use_vector": use_vector,
                 "matching_version": MATCHING_VERSION,
             },
         )
@@ -75,7 +79,7 @@ class ShortlistMatchingService:
             candidates: list[MatchCandidate] = []
             for grant in grants:
                 evaluated += 1
-                candidate = self.score(grant=grant, client=client, history=history)
+                candidate = self.score(grant=grant, client=client, history=history, use_vector=use_vector)
                 if not candidate.hard_filter_passed:
                     filtered += 1
                     continue
@@ -96,7 +100,7 @@ class ShortlistMatchingService:
                     filter_reasons=candidate.filter_reasons,
                     keyword_score=candidate.keyword_score,
                     history_score=candidate.history_score,
-                    vector_score=None,
+                    vector_score=candidate.vector_score,
                     llm_score=None,
                     explanation=self._explanation(candidate),
                     risks_text=None,
@@ -106,7 +110,9 @@ class ShortlistMatchingService:
                         "matching_version": MATCHING_VERSION,
                         "score_breakdown": {
                             "keyword_score": str(candidate.keyword_score),
+                            "vector_score": str(candidate.vector_score) if candidate.vector_score is not None else None,
                             "history_score": str(candidate.history_score),
+                            "stage6_fallback_score": str((candidate.keyword_score * Decimal("0.75") + candidate.history_score * Decimal("0.25")).quantize(Decimal("0.0001"))),
                             "final_score": str(candidate.score),
                         },
                     },
@@ -132,12 +138,19 @@ class ShortlistMatchingService:
         grant: Grant,
         client: ClientProfile,
         history: list[ApplicationHistory] | None = None,
+        use_vector: bool = False,
     ) -> MatchCandidate:
         filter_passed, filter_reasons, manual_checks = self._hard_filter(grant=grant, client=client)
         keyword_score, keyword_evidence = self._keyword_score(grant=grant, client=client)
+        vector_score, vector_evidence = self._vector_score(grant=grant, client=client, history=history or []) if use_vector else (None, {"enabled": False})
         history_score, history_evidence = self._history_score(grant=grant, history=history or [])
 
-        score = (keyword_score * Decimal("0.75")) + (history_score * Decimal("0.25"))
+        stage6_score = (keyword_score * Decimal("0.75")) + (history_score * Decimal("0.25"))
+        if vector_score is not None:
+            vector_blended_score = (keyword_score * Decimal("0.45")) + (vector_score * Decimal("0.35")) + (history_score * Decimal("0.20"))
+            score = max(stage6_score, vector_blended_score)
+        else:
+            score = stage6_score
         if grant.extraction_confidence is not None:
             score += min(Decimal(str(grant.extraction_confidence)), Decimal("1.0000")) * Decimal("0.05")
         if manual_checks:
@@ -151,12 +164,14 @@ class ShortlistMatchingService:
             client=client,
             score=score,
             keyword_score=keyword_score,
+            vector_score=vector_score,
             history_score=history_score,
             hard_filter_passed=filter_passed,
             filter_reasons=filter_reasons,
             manual_checks=manual_checks,
             evidence={
                 "keyword": keyword_evidence,
+                "vector": vector_evidence,
                 "history": history_evidence,
                 "hard_filters": filter_reasons,
                 "manual_checks": manual_checks,
@@ -300,6 +315,43 @@ class ShortlistMatchingService:
         }
 
     @staticmethod
+    def _vector_score(*, grant: Grant, client: ClientProfile, history: list[ApplicationHistory]) -> tuple[Decimal | None, dict[str, Any]]:
+        grant_vector = ShortlistMatchingService._vector(grant.embedding)
+        client_vector = ShortlistMatchingService._vector(client.embedding)
+        grant_client_similarity = EmbeddingService.cosine_similarity(grant_vector, client_vector)
+
+        history_matches: list[dict[str, Any]] = []
+        best_history_similarity: float | None = None
+        for item in history:
+            history_similarity = EmbeddingService.cosine_similarity(grant_vector, ShortlistMatchingService._vector(item.embedding))
+            if history_similarity is None:
+                continue
+            normalized = max(0.0, min(1.0, history_similarity))
+            if best_history_similarity is None or normalized > best_history_similarity:
+                best_history_similarity = normalized
+            history_matches.append(
+                {
+                    "grant_title": item.grant_title,
+                    "result": item.result,
+                    "similarity": str(ShortlistMatchingService._decimal(normalized)),
+                }
+            )
+
+        if grant_client_similarity is None and best_history_similarity is None:
+            return None, {"enabled": True, "reason": "missing embeddings"}
+
+        score = Decimal("0.0000")
+        evidence: dict[str, Any] = {"enabled": True, "matched_history": history_matches[:5]}
+        if grant_client_similarity is not None:
+            normalized_client = max(0.0, min(1.0, grant_client_similarity))
+            score += ShortlistMatchingService._decimal(normalized_client) * Decimal("0.8000")
+            evidence["grant_client_similarity"] = str(ShortlistMatchingService._decimal(normalized_client))
+        if best_history_similarity is not None:
+            score += ShortlistMatchingService._decimal(best_history_similarity) * Decimal("0.2000")
+            evidence["best_history_similarity"] = str(ShortlistMatchingService._decimal(best_history_similarity))
+        return min(score, Decimal("1.0000")).quantize(Decimal("0.0001")), evidence
+
+    @staticmethod
     def _history_score(*, grant: Grant, history: list[ApplicationHistory]) -> tuple[Decimal, dict[str, Any]]:
         if not history:
             return Decimal("0.0000"), {"matched_history": []}
@@ -357,6 +409,17 @@ class ShortlistMatchingService:
         if any(token in text for token in ("company", "business", "підприєм", "компан", "llc", "тов")):
             result.add("company")
         return result
+
+    @staticmethod
+    def _vector(value: Any) -> list[float] | None:
+        if value is None:
+            return None
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        try:
+            return [float(item) for item in value]
+        except TypeError:
+            return None
 
     @staticmethod
     def _looks_like_non_grant_opportunity(grant: Grant) -> bool:

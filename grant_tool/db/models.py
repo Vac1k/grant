@@ -22,6 +22,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from grant_tool.db.base import Base
 
@@ -246,6 +247,10 @@ class Grant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     extraction_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     needs_manual_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     manual_review_reason: Mapped[str | None] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    embedding_text: Mapped[str | None] = mapped_column(Text)
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     source: Mapped[Source] = relationship(back_populates="grants")
     latest_raw_snapshot: Mapped[RawGrantSnapshot | None] = relationship(back_populates="grants")
@@ -271,6 +276,10 @@ class ClientProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_uri: Mapped[str | None] = mapped_column(Text)
     profile_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    embedding_text: Mapped[str | None] = mapped_column(Text)
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     application_history: Mapped[list[ApplicationHistory]] = relationship(
         back_populates="client_profile",
@@ -310,6 +319,10 @@ class ApplicationHistory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     similarity_weight: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, default=1)
     notes: Mapped[str | None] = mapped_column(Text)
     history_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    embedding_text: Mapped[str | None] = mapped_column(Text)
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     client_profile: Mapped[ClientProfile] = relationship(back_populates="application_history")
     grant: Mapped[Grant | None] = relationship(back_populates="application_history")

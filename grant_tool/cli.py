@@ -8,6 +8,8 @@ from grant_tool.client_import import ImportResult, import_application_history, i
 from grant_tool.config import get_settings
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.db.session import SessionLocal
+from grant_tool.embeddings import EmbeddingService, EmbeddingTarget
+from grant_tool.explanations import MatchExplanationService
 from grant_tool.extraction import FeatureExtractionService
 from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
 from grant_tool.ingestion.service import IngestionService
@@ -172,6 +174,7 @@ def _cmd_match(args: argparse.Namespace) -> None:
             top_n=args.top_n,
             min_score=args.min_score,
             name=args.name,
+            use_vector=args.use_vector,
         )
         session.commit()
 
@@ -184,6 +187,47 @@ def _cmd_match(args: argparse.Namespace) -> None:
         f"filtered={summary.filtered_count} "
         f"run={summary.match_run.id}"
     )
+
+
+def _cmd_embed(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = EmbeddingService(repository=repository, provider_name=args.provider)
+        summary = service.run(target=EmbeddingTarget(args.target), limit=args.limit, batch_size=args.batch_size)
+        session.commit()
+
+    print(
+        f"Embeddings: {summary.job.status} "
+        f"target={summary.target} "
+        f"processed={summary.processed_count} "
+        f"updated={summary.updated_count} "
+        f"failed={summary.failed_count} "
+        f"errors={len(summary.errors)} "
+        f"job={summary.job.id}"
+    )
+    for error in summary.errors:
+        print(f"- {error}")
+
+
+def _cmd_explain_matches(args: argparse.Namespace) -> None:
+    match_run_id = uuid.UUID(args.match_run_id) if args.match_run_id else None
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = MatchExplanationService(repository=repository, provider=args.provider)
+        summary = service.run(match_run_id=match_run_id, limit=args.limit)
+        session.commit()
+
+    print(
+        f"Explanations: {summary.job.status} "
+        f"match_run={summary.match_run_id} "
+        f"processed={summary.processed_count} "
+        f"updated={summary.updated_count} "
+        f"failed={summary.failed_count} "
+        f"errors={len(summary.errors)} "
+        f"job={summary.job.id}"
+    )
+    for error in summary.errors:
+        print(f"- {error}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -253,7 +297,27 @@ def _build_parser() -> argparse.ArgumentParser:
     match.add_argument("--top-n", type=int, default=10, help="Matches to save per client")
     match.add_argument("--min-score", type=float, default=0.25, help="Minimum shortlist score")
     match.add_argument("--name", default=None, help="Optional match run name")
+    match.add_argument("--use-vector", action="store_true", help="Use Stage 7 vector similarity when embeddings exist")
     match.set_defaults(func=_cmd_match)
+
+    embed = subparsers.add_parser(
+        "embed",
+        help="Generate Stage 7 embeddings for grants, clients, and application history",
+    )
+    embed.add_argument("--target", choices=[target.value for target in EmbeddingTarget], default=EmbeddingTarget.ALL.value)
+    embed.add_argument("--limit", type=int, default=None)
+    embed.add_argument("--batch-size", type=int, default=16)
+    embed.add_argument("--provider", choices=["hash", "openai"], default="hash")
+    embed.set_defaults(func=_cmd_embed)
+
+    explain_matches = subparsers.add_parser(
+        "explain-matches",
+        help="Generate Stage 8 explanations and risk notes for saved matches",
+    )
+    explain_matches.add_argument("--match-run-id", default=None, help="MatchRun id. Defaults to latest match run.")
+    explain_matches.add_argument("--limit", type=int, default=20)
+    explain_matches.add_argument("--provider", choices=["rule", "openai"], default="openai")
+    explain_matches.set_defaults(func=_cmd_explain_matches)
 
     return parser
 

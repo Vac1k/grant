@@ -1,6 +1,6 @@
 # App Operations Cheatsheet
 
-This file contains the commands used during Stage 2-5 implementation and testing.
+This file contains the commands used during Stage 2-8 implementation and testing.
 Run all commands from the project directory:
 
 ```bash
@@ -135,6 +135,82 @@ docker compose exec app grant-tool extract-features --limit 100 --use-llm
 
 `--use-llm` only works when `OPENAI_API_KEY` is configured. Without `--use-llm`, the app uses deterministic parsing only.
 
+## Run Stage 6/7 Matching
+
+Run strict Stage 6 shortlist matching:
+
+```bash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20
+```
+
+Generate Stage 7 embeddings with the deterministic local provider:
+
+```bash
+docker compose exec app grant-tool embed --target all --provider hash
+```
+
+Generate real semantic embeddings with OpenAI:
+
+```bash
+docker compose exec app grant-tool embed --target all --provider openai
+```
+
+Run matching with vector similarity enabled:
+
+```bash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
+```
+
+`hash` embeddings are only for local smoke tests and repeatable unit tests. Use `openai` embeddings for real semantic matching quality.
+
+Check embedding coverage:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "select 'grants' target, count(*) total, count(embedding) embedded from grants union all select 'clients', count(*), count(embedding) from client_profiles union all select 'history', count(*), count(embedding) from application_history;"
+```
+
+Check latest matches:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "select c.slug client, m.rank, m.score, m.keyword_score, m.vector_score, m.history_score, left(g.title, 90) grant_title from grant_client_matches m join client_profiles c on c.id=m.client_profile_id join grants g on g.id=m.grant_id order by m.created_at desc, c.slug, m.rank limit 20;"
+```
+
+## Run Stage 8 Match Explanations
+
+Generate deterministic local explanations for smoke testing:
+
+```bash
+docker compose exec app grant-tool explain-matches --limit 20 --provider rule
+```
+
+Generate real LLM explanations with OpenAI:
+
+```bash
+docker compose exec app grant-tool explain-matches --limit 20 --provider openai
+```
+
+Generate explanations for one exact match run:
+
+```bash
+docker compose exec app grant-tool explain-matches --match-run-id <match-run-id> --limit 20 --provider openai
+```
+
+`--provider openai` requires `OPENAI_API_KEY` in `.env`. The model is controlled by `LLM_MODEL`.
+
+Stage 8 writes explanations to `grant_client_matches`:
+
+- `explanation`
+- `risks_text`
+- `manual_checks`
+- `llm_score`
+- `match_metadata.llm_explanation`
+
+Check saved explanations:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "select c.slug client, m.rank, m.score, m.llm_score, left(g.title, 80) grant_title, left(m.explanation, 180) explanation, left(m.risks_text, 180) risks from grant_client_matches m join client_profiles c on c.id=m.client_profile_id join grants g on g.id=m.grant_id where m.explanation is not null order by m.updated_at desc limit 20;"
+```
+
 ## Inspect Saved Grant Fields
 
 Show recent grants:
@@ -205,5 +281,8 @@ docker compose exec db psql -U grant -d grant -c "delete from raw_grant_snapshot
 docker compose exec db psql -U grant -d grant -c "delete from job_runs where job_type = 'ingestion';"
 docker compose exec app grant-tool ingest --all --limit 20
 docker compose exec app grant-tool extract-features --limit 100
+docker compose exec app grant-tool embed --target all --provider hash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
+docker compose exec app grant-tool explain-matches --limit 20 --provider rule
 docker compose exec db psql -U grant -d grant -c "select s.slug, g.title, g.status, g.support_type, g.funding_amount_text, g.currency, g.deadline_text from grants g join sources s on s.id = g.source_id order by s.slug, g.title limit 50;"
 ```
