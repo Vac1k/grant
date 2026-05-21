@@ -39,6 +39,7 @@ Use `docker compose down` to stop containers without deleting database data.
 Use `docker compose down -v` only when you want to delete the local PostgreSQL volume.
 
 Detailed commands live in [`docs/start.md`](docs/start.md).
+The day-to-day operations cheatsheet is [`docs/operations.md`](docs/operations.md).
 
 ## Ingestion
 

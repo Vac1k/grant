@@ -11,6 +11,7 @@ from grant_tool.db.session import SessionLocal
 from grant_tool.extraction import FeatureExtractionService
 from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
 from grant_tool.ingestion.service import IngestionService
+from grant_tool.matching import ShortlistMatchingService
 from grant_tool.sources import seed_mvp_sources
 
 
@@ -161,6 +162,30 @@ def _cmd_extract_features(args: argparse.Namespace) -> None:
         print(f"- {error}")
 
 
+def _cmd_match(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = ShortlistMatchingService(repository=repository)
+        summary = service.run(
+            client_slug=args.client,
+            grant_limit=args.grant_limit,
+            top_n=args.top_n,
+            min_score=args.min_score,
+            name=args.name,
+        )
+        session.commit()
+
+    print(
+        f"Matching: {summary.match_run.status} "
+        f"clients={summary.clients_count} "
+        f"grants={summary.grants_count} "
+        f"evaluated={summary.evaluated_count} "
+        f"saved={summary.saved_count} "
+        f"filtered={summary.filtered_count} "
+        f"run={summary.match_run.id}"
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="grant-tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -218,6 +243,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use optional LLM extraction when OPENAI_API_KEY is configured",
     )
     extract_features.set_defaults(func=_cmd_extract_features)
+
+    match = subparsers.add_parser(
+        "match",
+        help="Run Stage 6 cheap filtering and shortlist matching",
+    )
+    match.add_argument("--client", default=None, help="Optional client profile slug")
+    match.add_argument("--grant-limit", type=int, default=None, help="Maximum grants to evaluate")
+    match.add_argument("--top-n", type=int, default=10, help="Matches to save per client")
+    match.add_argument("--min-score", type=float, default=0.25, help="Minimum shortlist score")
+    match.add_argument("--name", default=None, help="Optional match run name")
+    match.set_defaults(func=_cmd_match)
 
     return parser
 

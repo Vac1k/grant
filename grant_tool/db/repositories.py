@@ -359,6 +359,26 @@ class GrantRepository:
     def get_client_profile_by_name(self, name: str) -> ClientProfile | None:
         return self.session.scalar(select(ClientProfile).where(ClientProfile.name == name))
 
+    def list_client_profiles(self, *, enabled_only: bool = True) -> list[ClientProfile]:
+        query = select(ClientProfile).order_by(ClientProfile.name)
+        if enabled_only:
+            query = query.where(ClientProfile.enabled.is_(True))
+        return list(self.session.scalars(query))
+
+    def list_grants_for_matching(self, *, limit: int | None = None) -> list[Grant]:
+        query = select(Grant).options(selectinload(Grant.source)).order_by(Grant.updated_at.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
+    def list_application_history_for_client(self, client_profile_id: uuid.UUID) -> list[ApplicationHistory]:
+        query = (
+            select(ApplicationHistory)
+            .where(ApplicationHistory.client_profile_id == client_profile_id)
+            .order_by(ApplicationHistory.application_date.desc().nullslast(), ApplicationHistory.created_at.desc())
+        )
+        return list(self.session.scalars(query))
+
     def save_application_history(
         self,
         *,

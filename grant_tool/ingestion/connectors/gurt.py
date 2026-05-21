@@ -22,7 +22,13 @@ class GurtConnector(BaseConnector):
                 source_slug=self.source_slug,
                 errors=[ConnectorError(message="Source list_url is not configured", stage="fetch_list")],
             )
-        response = self.http.get(self.source.list_url)
+        try:
+            response = self.http.get(self.source.list_url)
+        except Exception as exc:
+            return ConnectorResult(
+                source_slug=self.source_slug,
+                errors=[ConnectorError(message=str(exc), source_url=self.source.list_url, stage="fetch_list")],
+            )
         links = extract_filtered_links(
             base_url=self.source.base_url,
             html=response.text,

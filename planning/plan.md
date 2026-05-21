@@ -164,7 +164,7 @@ MVP-джерела:
 
 ## Feature Extraction
 
-Статус реалізації Stage 5: done.
+Статус реалізації Stage 5: done; cleanup pass перед Stage 6 implemented.
 
 - Детерміноване витягування для:
   - title
@@ -217,7 +217,48 @@ MVP-джерела:
 - Optional LLM extraction uses `OPENAI_API_KEY`/`LLM_MODEL` and is disabled by default.
 - Tests додано у `tests/test_stage5_extraction.py`.
 
+Stage 5 cleanup pass перед Stage 6:
+
+- Fix EU funding extraction:
+  - не зберігати IDs/reference numbers/topic codes як grant funding;
+  - funding брати тільки з надійних amount/budget fields або textual evidence.
+- Fix Diia funding validation:
+  - не приймати KVED/classification values типу `01.2` як суму;
+  - suspicious values залишати тільки в metadata/debug або manual review reason.
+- Improve status rules для Diia open-ended programs:
+  - active pages без explicit deadline мають отримувати зрозумілий active/open-ended status або manual review reason.
+- Reduce noisy default topics:
+  - topics мають базуватись на grant content/evidence, не на generic page chrome.
+- Rerun LLM enrichment:
+  - `docker compose exec app grant-tool extract-features --limit 100 --use-llm`.
+- Перевірити DB metrics:
+  - completeness;
+  - `unknown_status`;
+  - `needs_manual_review`;
+  - suspicious funding;
+  - sample review по EU, Diia і Prostir.
+
+Фактично implemented:
+
+- `NORMALIZATION_VERSION = stage5-deterministic-v2`.
+- EU IDs/reference numbers/deadline years більше не стають funding amounts.
+- EU JSON `minContribution`/`maxContribution` формує clean funding range text.
+- Diia KVED/classification values типу `01.2` відкидаються з funding fields.
+- Diia active finance pages без deadline отримують open/open-ended status.
+- Topics extraction більше не бере raw payload/page metadata як джерело default topics; generic topics чистяться.
+- Regression tests додані у `tests/test_stage5_extraction.py`.
+
+Після deterministic rerun на поточній DB:
+
+- `diia-business`: unknown_status 0, suspicious_funding 0.
+- `eu-funding`: suspicious_funding 0, але багато records все ще потребують manual review/LLM через слабкий content з API.
+- `prostir`: без obvious cleanup blockers.
+
+Stage 6 можна починати після rerun `extract-features --use-llm`, щоб filtering і shortlist scoring мали кращі eligibility/topics для EU records.
+
 ## Matching
+
+Статус реалізації Stage 6: done for MVP.
 
 - Спочатку hard filters:
   - активний або upcoming deadline
@@ -253,6 +294,55 @@ MVP-джерела:
 
 - LLM не має бути єдиним джерелом рішення про match.
 - Попередні подачі на схожі гранти є позитивним relevance signal незалежно від win/loss result.
+
+Фактично Stage 6 implemented:
+
+- Додано `grant_tool/matching/ShortlistMatchingService`.
+- Додано CLI `grant-tool match`.
+- Results зберігаються у `grant_client_matches`.
+- Кожен запуск створює `MatchRun`.
+- Score breakdown зберігається у `match_metadata`.
+- Evidence зберігається у `evidence`.
+- `manual_checks` використовуються для unknown/missing fields.
+- Hard filters відсікають:
+  - closed/expired grants;
+  - country mismatch;
+  - applicant type mismatch;
+  - explicit restriction conflict;
+  - training/tender/procurement/non-grant opportunities;
+  - nonprofit-only grants для company clients.
+- Keyword score використовує:
+  - topic hits;
+  - technology hits;
+  - applicant type fit;
+  - sector fit;
+  - excluded topic penalty.
+- Application history score:
+  - дає boost за topic/text similarity;
+  - дає boost за reusable materials;
+  - не penalize-ить `lost`, `rejected`, `not_submitted`.
+
+Stage 6 command:
+
+- `docker compose exec app grant-tool match --top-n 5 --min-score 0.20`
+- `docker compose exec app grant-tool match --client intelswift --top-n 10`
+
+Поточний Docker smoke:
+
+- evaluated 260 grant-client pairs;
+- saved 3 strict shortlist matches;
+- filtered 257;
+- score range приблизно `0.2200-0.2273`.
+
+Якість Stage 6 зараз: precision-oriented MVP. Він краще відсікає garbage, але recall буде обмежений до Stage 7 vector similarity.
+
+Важливий принцип для наступних stages:
+
+- Поточні grants у локальній DB є випадковим sample, а не ground truth dataset.
+- Не підганяти matching logic під конкретні grants, які зараз лежать у DB.
+- Додавати тільки generic rules, які мають сенс для багатьох джерел, клієнтів і майбутніх datasets.
+- Source-specific або language-specific евристики мають бути конфігурованими rule sets з evidence, а не ad hoc logic.
+- Stage 7 має будувати generic matching architecture, а не оптимізуватись під поточний scrape result.
 
 ## Dashboard
 

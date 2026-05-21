@@ -114,6 +114,175 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertEqual(draft.status, "open")
         self.assertEqual(draft.deadline_at.date().isoformat(), "2026-07-16")
 
+    def test_eu_budget_ids_are_not_saved_as_funding(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/TEST",
+            title="EU media opportunity",
+            funding_amount_text='{"budgetTopicActionMap":{"167264":[{"deadlineDates":["2026-03-19"],"topicAction":"99478"}]}}',
+        )
+        raw_payload = {
+            "metadata": {
+                "budgetOverview": [draft.funding_amount_text],
+                "deadlineDate": ['{"deadlineDates":["2026-03-19"]}'],
+            }
+        }
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="eu-funding", raw_payload=raw_payload)
+
+        self.assertIsNone(draft.funding_amount_text)
+        self.assertIsNone(draft.funding_amount_min)
+        self.assertIsNone(draft.funding_amount_max)
+        self.assertIn("funding_amount_rejected", draft.extraction_metadata["fields"])
+
+    def test_eu_explicit_budget_amount_is_kept(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/HORIZON-TEST",
+            title="EU innovation grant",
+            funding_amount_text="EUR 1 000 000",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="eu-funding")
+
+        self.assertEqual(draft.currency, "EUR")
+        self.assertEqual(str(draft.funding_amount_max), "1000000.00")
+
+    def test_eu_deadline_year_is_not_saved_as_funding(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/HORIZON-YEAR",
+            title="Clean technologies for climate neutrality",
+            description_text="Deadline model with EUR eligibility context. Call deadline is 2026.",
+            funding_amount_text="EUR 2026",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="eu-funding")
+
+        self.assertIsNone(draft.funding_amount_text)
+        self.assertIsNone(draft.funding_amount_max)
+        self.assertEqual(draft.currency, "EUR")
+
+    def test_eu_json_contribution_uses_amount_range_text_not_year(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/HORIZON-CID-2026-01-01",
+            title="Clean Industrial Deal 2026",
+            funding_amount_text='{"budgetTopicActionMap":{"172802":[{"minContribution":15000000,"maxContribution":25000000,"deadlineDates":["2026-04-23"]}]}}',
+        )
+        raw_payload = {"metadata": {"budgetOverview": [draft.funding_amount_text]}}
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="eu-funding", raw_payload=raw_payload)
+
+        self.assertEqual(draft.funding_amount_text, "EUR 15 000 000 - 25 000 000")
+        self.assertEqual(str(draft.funding_amount_min), "15000000.00")
+        self.assertEqual(str(draft.funding_amount_max), "25000000.00")
+
+    def test_diia_kved_value_is_not_saved_as_funding(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.business.diia.gov.ua/finance/grant_na_pererobne_pidpryiemstvo",
+            title="Грант на переробне підприємство",
+            description_text="КВЕД: 01.2. Подати заявку можна онлайн. Програма діє для підприємців.",
+            application_url="https://diia.gov.ua/services/grant",
+            status="unknown",
+            support_type="grant",
+            funding_amount_text="01.2",
+            currency="UAH",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="diia-business")
+
+        self.assertEqual(draft.status, "open")
+        self.assertIsNone(draft.funding_amount_text)
+        self.assertIsNone(draft.funding_amount_max)
+        self.assertEqual(draft.currency, "UAH")
+
+    def test_diia_finance_page_without_deadline_is_open_ended(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.business.diia.gov.ua/finance/grant_na_sad",
+            title="Грант на сад",
+            description_text="Фінансова програма для підприємців. Термін завершення програми не визначено.",
+            status="unknown",
+            support_type="grant",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="diia-business")
+
+        self.assertEqual(draft.status, "open")
+
+    def test_diia_open_ended_program_with_valid_amount_is_open(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.business.diia.gov.ua/finance/grant_na_sad",
+            title="Грант на сад",
+            description_text="Отримати грант може підприємець. Подати заявку можна онлайн.",
+            application_url="https://diia.gov.ua/services/grant-na-sad",
+            status="unknown",
+            support_type="grant",
+            funding_amount_text="до 400 000",
+            currency="UAH",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="diia-business")
+
+        self.assertEqual(draft.status, "open")
+        self.assertEqual(str(draft.funding_amount_max), "400000.00")
+        self.assertEqual(draft.currency, "UAH")
+
+    def test_diia_grant_amount_field_wins_over_total_program_budget(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.business.diia.gov.ua/finance/mikrogrant_dlya_veteranskogo_biznesu",
+            title="Мікрогрант для ветеранського бізнесу",
+            description_text=(
+                "Програма розрахована на 500 аплікантів з максимальною сумою відшкодування "
+                "20 000 UAH на одну заявку. Усього на програму виділено 10 000 000 UAH."
+            ),
+            status="unknown",
+            support_type="grant",
+            funding_amount_text="До 20 000",
+            currency="UAH",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="diia-business")
+
+        self.assertEqual(draft.funding_amount_text, "До 20 000")
+        self.assertEqual(str(draft.funding_amount_max), "20000.00")
+
+    def test_diia_grant_amount_is_recovered_from_metadata_on_rerun(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://www.business.diia.gov.ua/finance/mikrogrant_dlya_veteranskogo_biznesu",
+            title="Мікрогрант для ветеранського бізнесу",
+            description_text=(
+                "Програма розрахована на 500 аплікантів з максимальною сумою відшкодування "
+                "20 000 UAH на одну заявку. Усього на програму виділено 10 000 000 UAH."
+            ),
+            status="unknown",
+            support_type="grant",
+            source_metadata={
+                "attributes": [
+                    {"key": "dodatkoviumovidlyarozmirugrantu", "value": "Усього на програму виділено 10 000 000 UAH"},
+                    {"key": "grantAmount", "value": "До 20 000"},
+                    {"key": "currency", "value": "UAH"},
+                ]
+            },
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="diia-business")
+
+        self.assertEqual(draft.funding_amount_text, "До 20 000")
+        self.assertEqual(str(draft.funding_amount_max), "20000.00")
+        self.assertEqual(draft.currency, "UAH")
+
+    def test_raw_payload_keywords_do_not_create_noisy_topics(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/plain",
+            title="Plain opportunity",
+            description_text="Short grant page for Ukrainian companies.",
+        )
+        raw_payload = {
+            "navigation": "education culture humanitarian defence innovation AI business support",
+            "metadata": {"keywords": ["гранти", "фінансування"]},
+        }
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="example", raw_payload=raw_payload)
+
+        self.assertEqual(draft.topics, [])
+
     def test_ingestion_service_applies_stage5_features(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"
         detail_url = "https://www.prostir.ua/grant/test-grant/"
@@ -176,6 +345,28 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertIn("community", grant.topics)
         self.assertIn("humanitarian", grant.topics)
         self.assertEqual(grant.currency, "USD")
+
+    def test_llm_success_sets_extraction_method_and_metadata(self) -> None:
+        class FakeLlmClient:
+            def extract(self, *, draft: NormalizedGrantDraft, text: str) -> dict:
+                return {
+                    "topics": ["energy resilience"],
+                    "applicant_types": ["municipality"],
+                    "metadata": {"status": "success", "provider": "test", "model": "fake"},
+                }
+
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/energy",
+            title="Energy resilience grant",
+            description_text="Funding for community energy resilience projects.",
+        )
+
+        FeatureExtractionService(use_llm=True, llm_client=FakeLlmClient()).enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(draft.extraction_method, "deterministic_llm")
+        self.assertEqual(draft.extraction_metadata["llm"]["status"], "success")
+        self.assertIn("energy resilience", draft.topics)
+        self.assertIn("municipality", draft.applicant_types)
 
     def test_deadline_parser_ignores_publication_date_and_reads_ukrainian_month(self) -> None:
         text = (

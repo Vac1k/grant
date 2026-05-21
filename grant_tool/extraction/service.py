@@ -15,7 +15,7 @@ from grant_tool.ingestion.types import FetchedGrant, NormalizedGrantDraft
 from grant_tool.ingestion.utils import clean_text, extract_deadline, extract_funding_text, parse_datetime, status_from_deadline
 
 
-NORMALIZATION_VERSION = "stage5-deterministic-v1"
+NORMALIZATION_VERSION = "stage5-deterministic-v2"
 
 
 @dataclass(slots=True)
@@ -47,8 +47,8 @@ TOPIC_RULES = (
     KeywordRule("defence", ("defence", "defense", "military", "security and defence", "оборон", "військ", "безпек")),
     KeywordRule("dual-use", ("dual-use", "dual use", "подвійн", "подвійного призначення")),
     KeywordRule("innovation", ("innovation", "innovative", "r&d", "research and innovation", "інновац", "дослідж", "технолог")),
-    KeywordRule("community", ("community", "communities", "local", "громад", "місцев", "територіальн")),
-    KeywordRule("business support", ("business support", "entrepreneurship", "sme", "small business", "підприємниц", "бізнес", "мсп", "мсб")),
+    KeywordRule("community", ("community", "communities", "local community", "local communities", "громад", "місцев", "територіальн")),
+    KeywordRule("business support", ("business support", "entrepreneurship", "sme", "small business", "підприємниц", "мсп", "мсб")),
     KeywordRule("education", ("education", "educational", "training", "course", "освіт", "навчан", "тренінг", "курс")),
     KeywordRule("culture", ("culture", "creative", "cultural", "культур", "креатив")),
     KeywordRule("humanitarian", ("humanitarian", "human rights", "displaced", "veteran", "relief", "гуманітар", "впо", "ветеран", "постраждал", "захист")),
@@ -71,6 +71,21 @@ GENERIC_TITLES = {
     "login",
     "untitled diia business programme",
     "untitled opportunity",
+}
+
+GENERIC_TOPICS = {
+    "grant",
+    "grants",
+    "грант",
+    "гранти",
+    "finance",
+    "financing",
+    "фінанси",
+    "фінансування",
+    "державна підтримка",
+    "підтримка",
+    "business",
+    "бізнес",
 }
 
 
@@ -110,6 +125,7 @@ class FeatureExtractionService:
         metadata = dict(draft.extraction_metadata or {})
         fields = dict(metadata.get("fields") or {})
         text = self._combined_text(draft, raw_text=raw_text, raw_html=raw_html, raw_payload=raw_payload)
+        content_text = self._content_text(draft, raw_text=raw_text)
 
         original_title = draft.title
         draft.title = self._normalize_title(draft.title, draft.source_url)
@@ -136,18 +152,21 @@ class FeatureExtractionService:
 
         draft.status = self._normalize_status(draft.status, draft.deadline_at)
         self._set_field_evidence(fields, "status", "deterministic", Decimal("0.80"), draft.status)
+        if source_slug == "diia-business":
+            self._normalize_diia_status(draft, content_text, fields)
 
         if source_slug == "eu-funding":
             self._normalize_eu_program(draft, fields)
 
-        self._extract_funding(draft, text, fields, raw_payload=raw_payload)
-        self._classify_opportunity(draft, text, fields)
-        self._extract_taxonomy(draft, text, fields)
-        self._extract_geography(draft, text, fields)
-        self._extract_text_features(draft, text, fields)
+        self._extract_funding(draft, text, fields, raw_payload=raw_payload, source_slug=source_slug)
+        self._classify_opportunity(draft, content_text, fields)
+        self._extract_taxonomy(draft, content_text, fields)
+        self._extract_geography(draft, content_text, fields)
+        self._extract_text_features(draft, content_text, fields)
 
         if self.use_llm:
             self._apply_llm_extraction(draft, text, fields)
+            metadata = dict(draft.extraction_metadata or metadata)
 
         confidence = self._confidence(draft, text)
         draft.extraction_confidence = confidence
@@ -384,6 +403,19 @@ class FeatureExtractionService:
         return clean_text(" ".join(part for part in parts if part)) or ""
 
     @staticmethod
+    def _content_text(draft: NormalizedGrantDraft, *, raw_text: str | None) -> str:
+        parts = [
+            draft.title,
+            draft.summary,
+            draft.description_text,
+            draft.eligibility_text,
+            draft.restrictions_text,
+            draft.geography_text,
+            raw_text if not draft.description_text else None,
+        ]
+        return clean_text(" ".join(part for part in parts if part)) or ""
+
+    @staticmethod
     def _deadline_from_payload(raw_payload: dict[str, Any] | list[Any] | None) -> tuple[datetime | None, str | None]:
         if raw_payload is None:
             return None, None
@@ -488,6 +520,48 @@ class FeatureExtractionService:
         return "unknown"
 
     @staticmethod
+    def _normalize_diia_status(draft: NormalizedGrantDraft, text: str, fields: dict[str, Any]) -> None:
+        if draft.status != "unknown" or draft.deadline_at is not None:
+            return
+        lowered = f" {text.lower()} "
+        explicit_closed_signal = any(
+            token in lowered
+            for token in (
+                "архів",
+                "прийом заявок завершено",
+                "прийом заявок закрито",
+                "програма завершена",
+                "програма закрита",
+                "неактивна програма",
+            )
+        )
+        if explicit_closed_signal:
+            return
+        open_ended_signal = any(
+            token in lowered
+            for token in (
+                "постійно",
+                "безстрок",
+                "до припинення",
+                "діє програма",
+                "подати заявку",
+                "отримати грант",
+                "отримати фінансування",
+            )
+        )
+        active_finance_program = draft.support_type in {"grant", "finance_programme", "loan", "guarantee", "leasing", "factoring"}
+        active_finance_page = "business.diia.gov.ua/finance" in draft.source_url
+        if open_ended_signal or (active_finance_program and (draft.application_url or active_finance_page)):
+            draft.status = "open"
+            FeatureExtractionService._set_field_evidence(
+                fields,
+                "status",
+                "deterministic",
+                Decimal("0.68"),
+                "Diia active/open-ended finance programme without explicit deadline",
+            )
+
+    @staticmethod
     def _normalize_eu_program(draft: NormalizedGrantDraft, fields: dict[str, Any]) -> None:
         metadata = draft.source_metadata.get("eu_metadata") if isinstance(draft.source_metadata, dict) else None
         if not isinstance(metadata, dict):
@@ -522,6 +596,7 @@ class FeatureExtractionService:
         fields: dict[str, Any],
         *,
         raw_payload: dict[str, Any] | list[Any] | None = None,
+        source_slug: str | None = None,
     ) -> None:
         contextual_snippet = FeatureExtractionService._snippet(
             text,
@@ -529,22 +604,59 @@ class FeatureExtractionService:
             radius=360,
         )
         payload_budget = FeatureExtractionService._budget_context_from_payload(raw_payload)
+        source_amount_text = draft.funding_amount_text
+        if source_slug == "diia-business" and not source_amount_text:
+            source_amount_text = FeatureExtractionService._diia_grant_amount_text(draft.source_metadata, raw_payload)
+        source_currency = draft.currency
+        if source_slug == "diia-business" and not source_currency:
+            source_currency = FeatureExtractionService._diia_currency_text(draft.source_metadata, raw_payload)
+        source_amount_context = clean_text(" ".join(part for part in (source_amount_text, source_currency) if part))
         funding_context = clean_text(
             " ".join(
                 part
                 for part in (
-                    draft.funding_amount_text,
+                    source_amount_text,
+                    draft.currency,
                     payload_budget or contextual_snippet,
                     None if payload_budget else extract_funding_text(text),
                 )
                 if part
             )
         )
-        amount_min, amount_max, currency = FeatureExtractionService._parse_funding(funding_context)
+        amount_min, amount_max, currency = (None, None, None)
+        if source_slug == "diia-business" and source_amount_context:
+            amount_min, amount_max, currency = FeatureExtractionService._parse_funding(source_amount_context, source_slug=source_slug)
+            if amount_min is not None or amount_max is not None:
+                funding_context = source_amount_context
+        if amount_min is None and amount_max is None and payload_budget:
+            amount_min, amount_max, currency = FeatureExtractionService._parse_funding(payload_budget, source_slug=source_slug)
+        if amount_min is None and amount_max is None:
+            amount_min, amount_max, currency = FeatureExtractionService._parse_funding(funding_context, source_slug=source_slug)
         funding_text = None
-        if amount_min is not None or amount_max is not None or currency is not None:
-            funding_text = extract_funding_text(FeatureExtractionService._strip_dates(funding_context)) or draft.funding_amount_text or contextual_snippet
-        if funding_text and (not draft.funding_amount_text or FeatureExtractionService._looks_like_date(draft.funding_amount_text)):
+        if amount_min is not None or amount_max is not None:
+            if payload_budget:
+                funding_text = FeatureExtractionService._format_funding_text(amount_min, amount_max, currency or draft.currency)
+            elif source_slug == "diia-business" and source_amount_text:
+                funding_text = source_amount_text
+            else:
+                funding_text = extract_funding_text(FeatureExtractionService._strip_dates(funding_context)) or draft.funding_amount_text or contextual_snippet
+                if FeatureExtractionService._looks_like_suspicious_funding_text(funding_text):
+                    funding_text = None
+                funding_text = funding_text or FeatureExtractionService._format_funding_text(amount_min, amount_max, currency or draft.currency)
+        elif draft.funding_amount_text and FeatureExtractionService._looks_like_suspicious_funding_text(draft.funding_amount_text):
+            FeatureExtractionService._set_field_evidence(
+                fields,
+                "funding_amount_rejected",
+                "deterministic",
+                Decimal("0.75"),
+                draft.funding_amount_text,
+            )
+            draft.funding_amount_text = None
+        if funding_text and (
+            not draft.funding_amount_text
+            or FeatureExtractionService._looks_like_date(draft.funding_amount_text)
+            or FeatureExtractionService._looks_like_suspicious_funding_text(draft.funding_amount_text)
+        ):
             draft.funding_amount_text = funding_text
         if draft.funding_amount_min is None and amount_min is not None:
             draft.funding_amount_min = amount_min
@@ -584,6 +696,77 @@ class FeatureExtractionService:
         return walk(raw_payload)
 
     @staticmethod
+    def _diia_grant_amount_text(source_metadata: dict[str, Any] | None, raw_payload: dict[str, Any] | list[Any] | None) -> str | None:
+        return FeatureExtractionService._diia_attribute_text(source_metadata, raw_payload, keys={"grantamount", "сума"})
+
+    @staticmethod
+    def _diia_currency_text(source_metadata: dict[str, Any] | None, raw_payload: dict[str, Any] | list[Any] | None) -> str | None:
+        return FeatureExtractionService._diia_attribute_text(source_metadata, raw_payload, keys={"currency", "валюта"})
+
+    @staticmethod
+    def _diia_attribute_text(
+        source_metadata: dict[str, Any] | None,
+        raw_payload: dict[str, Any] | list[Any] | None,
+        *,
+        keys: set[str],
+    ) -> str | None:
+        metadata_attributes = source_metadata.get("attributes") if isinstance(source_metadata, dict) else None
+        value = FeatureExtractionService._diia_attribute_from_attributes(metadata_attributes, keys=keys)
+        if value:
+            return value
+
+        def walk(payload: Any) -> str | None:
+            if isinstance(payload, dict):
+                value = FeatureExtractionService._diia_attribute_from_attributes(payload.get("serviceAttributes"), keys=keys)
+                if value:
+                    return value
+                for item in payload.values():
+                    found = walk(item)
+                    if found:
+                        return found
+            elif isinstance(payload, list):
+                for item in payload:
+                    found = walk(item)
+                    if found:
+                        return found
+            return None
+
+        return walk(raw_payload)
+
+    @staticmethod
+    def _diia_attribute_from_attributes(attributes: Any, *, keys: set[str]) -> str | None:
+        if not isinstance(attributes, list):
+            return None
+        for attribute in attributes:
+            if not isinstance(attribute, dict):
+                continue
+            key = clean_text(attribute.get("key"))
+            value = clean_text(attribute.get("value"))
+            if not value:
+                continue
+            if key and FeatureExtractionService._normalise_key(key) in keys:
+                return value
+
+            category_attribute = attribute.get("categoryAttribute") if isinstance(attribute.get("categoryAttribute"), dict) else {}
+            nested_attribute = category_attribute.get("attribute") if isinstance(category_attribute.get("attribute"), dict) else {}
+            names = [
+                nested_attribute.get("name"),
+                nested_attribute.get("title"),
+                *[
+                    translation.get("title")
+                    for translation in nested_attribute.get("translations", [])
+                    if isinstance(translation, dict)
+                ],
+            ]
+            if any(FeatureExtractionService._normalise_key(str(name or "")) in keys for name in names):
+                return value
+        return None
+
+    @staticmethod
+    def _normalise_key(value: str) -> str:
+        return re.sub(r"[^a-zа-яіїєґ0-9]+", "", value.lower())
+
+    @staticmethod
     def _classify_opportunity(draft: NormalizedGrantDraft, text: str, fields: dict[str, Any]) -> None:
         title = f" {draft.title} ".lower()
         intro = f" {text[:900]} ".lower()
@@ -617,13 +800,15 @@ class FeatureExtractionService:
         )
 
     @staticmethod
-    def _parse_funding(text: str | None) -> tuple[Decimal | None, Decimal | None, str | None]:
+    def _parse_funding(text: str | None, *, source_slug: str | None = None) -> tuple[Decimal | None, Decimal | None, str | None]:
         cleaned = clean_text(text)
         if not cleaned:
             return None, None, None
         json_amounts = FeatureExtractionService._parse_json_funding(cleaned)
         if json_amounts[0] is not None or json_amounts[1] is not None:
             return json_amounts
+        if cleaned.strip().startswith("{"):
+            return None, None, None
 
         lowered = cleaned.lower()
         has_money_signal = any(
@@ -658,9 +843,30 @@ class FeatureExtractionService:
 
         amount_source = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b", " ", cleaned)
         amount_source = re.sub(r"\b20\d{2}[./-]\d{1,2}[./-]\d{1,2}\b", " ", amount_source)
-        amount_matches = re.findall(r"(?:€|eur|euro|usd|uah|\$|грн|₴)?\s*(\d[\d\s.,]*)(?:\s*(k|m|тис\.?|млн\.?|million|thousand))?", amount_source, flags=re.IGNORECASE)
-        amounts = [FeatureExtractionService._number_to_decimal(number, multiplier) for number, multiplier in amount_matches]
-        amounts = [amount for amount in amounts if amount is not None]
+        amount_matches = re.finditer(
+            r"(?P<prefix>€|eur|euro|usd|uah|\$|грн|₴)?\s*(?P<number>\d[\d\s.,]*)(?:\s*(?P<multiplier>k|m|тис\.?|млн\.?|million|thousand))?(?:\s*(?P<suffix>€|eur|euro|usd|uah|\$|грн|₴))?",
+            amount_source,
+            flags=re.IGNORECASE,
+        )
+        amounts: list[Decimal] = []
+        for match in amount_matches:
+            number = match.group("number")
+            multiplier = match.group("multiplier")
+            amount = FeatureExtractionService._number_to_decimal(number, multiplier)
+            if amount is None:
+                continue
+            window_start = max(0, match.start() - 40)
+            window_end = min(len(amount_source), match.end() + 40)
+            window = amount_source[window_start:window_end]
+            if not FeatureExtractionService._valid_funding_amount_candidate(
+                number=number,
+                multiplier=multiplier,
+                amount=amount,
+                window=window,
+                source_slug=source_slug,
+            ):
+                continue
+            amounts.append(amount)
         if not amounts:
             return None, None, currency
         if currency is None and max(amounts) < Decimal("10000"):
@@ -670,6 +876,69 @@ class FeatureExtractionService:
         if len(amounts) >= 2:
             return min(amounts), max(amounts), currency
         return amounts[0], amounts[0], currency
+
+    @staticmethod
+    def _valid_funding_amount_candidate(
+        *,
+        number: str,
+        multiplier: str | None,
+        amount: Decimal,
+        window: str,
+        source_slug: str | None,
+    ) -> bool:
+        if FeatureExtractionService._looks_like_classification_number(number, window):
+            return False
+        if re.search(r"(?<!\d)20\d{2}(?!\d)", number.strip(" .,")):
+            return False
+        compact = number.replace(" ", "").strip(".,")
+        if re.fullmatch(r"20\d{2}", compact):
+            return False
+        lowered_window = window.lower()
+        has_adjacent_currency = bool(re.search(r"(€|\$|₴|\beur\b|\beuro\b|\busd\b|\buah\b|грн)", lowered_window))
+        has_money_word = any(token in lowered_window for token in ("funding", "budget", "grant amount", "сума", "фінанс", "бюджет", "підтримк"))
+        if multiplier:
+            return True
+        if source_slug == "eu-funding":
+            return has_adjacent_currency
+        if has_adjacent_currency:
+            return True
+        return has_money_word and amount >= Decimal("10000")
+
+    @staticmethod
+    def _looks_like_classification_number(number: str, window: str) -> bool:
+        compact = number.replace(" ", "").strip(".,")
+        if re.fullmatch(r"\d{1,2}[.,]\d{1,2}", compact):
+            lowered_window = window.lower()
+            has_adjacent_currency = bool(re.search(r"(€|\$|₴|\beur\b|\beuro\b|\busd\b|\buah\b|грн)", lowered_window))
+            if compact.startswith("0") or not has_adjacent_currency or any(token in lowered_window for token in ("квед", "nace", "classification", "класиф")):
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_suspicious_funding_text(text: str | None) -> bool:
+        cleaned = clean_text(text) or ""
+        if not cleaned:
+            return False
+        if cleaned.startswith("{") and ("budgetTopicActionMap" in cleaned or "deadlineDates" in cleaned):
+            return True
+        if re.fullmatch(r"(?i)(?:eur|euro|usd|uah|€|\$|₴|грн)?\s*20\d{2}\s*(?:eur|euro|usd|uah|€|\$|₴|грн)?", cleaned):
+            return True
+        return FeatureExtractionService._looks_like_classification_number(cleaned, cleaned)
+
+    @staticmethod
+    def _format_funding_text(amount_min: Decimal | None, amount_max: Decimal | None, currency: str | None) -> str | None:
+        if amount_min is None and amount_max is None:
+            return None
+        prefix = f"{currency} " if currency else ""
+        if amount_min is not None and amount_max is not None and amount_min != amount_max:
+            return f"{prefix}{FeatureExtractionService._format_amount(amount_min)} - {FeatureExtractionService._format_amount(amount_max)}"
+        amount = amount_max if amount_max is not None else amount_min
+        return f"{prefix}{FeatureExtractionService._format_amount(amount)}" if amount is not None else None
+
+    @staticmethod
+    def _format_amount(amount: Decimal) -> str:
+        normalized = amount.quantize(Decimal("1")) if amount == amount.to_integral() else amount.normalize()
+        return f"{normalized:,}".replace(",", " ")
 
     @staticmethod
     def _parse_json_funding(text: str) -> tuple[Decimal | None, Decimal | None, str | None]:
@@ -701,7 +970,7 @@ class FeatureExtractionService:
 
     @staticmethod
     def _number_to_decimal(value: str, multiplier: str | None) -> Decimal | None:
-        normalized = value.replace(" ", "").replace(",", ".")
+        normalized = value.replace(" ", "").strip(".,").replace(",", ".")
         if normalized.count(".") > 1:
             normalized = normalized.replace(".", "")
         try:
@@ -717,6 +986,7 @@ class FeatureExtractionService:
 
     @staticmethod
     def _extract_taxonomy(draft: NormalizedGrantDraft, text: str, fields: dict[str, Any]) -> None:
+        draft.topics = FeatureExtractionService._remove_generic_topics(draft.topics)
         applicant_types = FeatureExtractionService._match_rules(text, APPLICANT_TYPE_RULES)
         topics = FeatureExtractionService._match_rules(text, TOPIC_RULES)
         if applicant_types:
@@ -726,6 +996,19 @@ class FeatureExtractionService:
             draft.topics = FeatureExtractionService._merge_list(draft.topics, topics)
             FeatureExtractionService._set_field_evidence(fields, "topics", "deterministic", Decimal("0.70"), "; ".join(topics))
         draft.keywords = FeatureExtractionService._merge_list(draft.keywords, draft.topics)
+
+    @staticmethod
+    def _remove_generic_topics(topics: list[str] | None) -> list[str]:
+        cleaned_topics: list[str] = []
+        for topic in topics or []:
+            cleaned = clean_text(topic)
+            if not cleaned:
+                continue
+            normalized = cleaned.lower()
+            if normalized in GENERIC_TOPICS:
+                continue
+            cleaned_topics.append(cleaned)
+        return FeatureExtractionService._merge_list([], cleaned_topics)
 
     @staticmethod
     def _match_rules(text: str, rules: tuple[KeywordRule, ...]) -> list[str]:

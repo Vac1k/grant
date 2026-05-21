@@ -779,6 +779,87 @@ Status: done
 - `poetry run python -m compileall grant_tool tests`
 - `poetry run grant-tool --help`
 
+### Stage 5 cleanup gate перед Stage 6
+
+Статус: implemented; DB should be re-enriched before Stage 6 matching.
+
+Після реального запуску `grant-tool ingest --all --limit 10` і
+`grant-tool extract-features --limit 100 --use-llm` базова Stage 5 працює:
+дані зберігаються, deterministic extraction виконується, LLM enrichment
+запускається для вже збереженого raw text. Але DB metrics показали кілька
+проблем якості, які краще закрити до Stage 6, інакше cheap filtering/matching
+буде ранжувати частину grant records на слабких або noisy features.
+
+Cleanup tasks:
+
+1. Fix EU funding extraction:
+   - не приймати internal IDs, reference numbers, checksums або topic codes як `funding_amount_text`;
+   - витягувати funding тільки з явних budget/amount/value полів або надійних textual patterns;
+   - якщо сума неочевидна, залишати funding empty і додавати evidence/manual review reason.
+2. Fix Diia funding validation:
+   - не приймати KVED/classification values типу `01.2` як суму фінансування;
+   - валідні суми мають бути currency-like amount values або текстові ranges з контекстом гранту;
+   - bad candidate values повинні йти в extraction metadata/debug, але не в normalized funding fields.
+3. Improve status rules для Diia open-ended programs:
+   - програми без явного deadline, але з активною сторінкою/умовами подачі, не мають автоматично ставати `unknown`;
+   - додати rule для open-ended або active-until-changed programs;
+   - зберігати reason у `extraction_metadata.fields.status`.
+4. Reduce noisy default topics:
+   - не додавати broad topics лише через generic words у page chrome/navigation;
+   - topics мають базуватись на title, summary, eligibility, program description або LLM evidence;
+   - краще менше topics з вищою якістю, ніж багато weak tags.
+5. Rerun LLM enrichment:
+   - після fixes очистити або пере-enrich existing rows;
+   - запустити `docker compose exec app grant-tool extract-features --limit 100 --use-llm`;
+   - перевірити, що LLM metadata і `extraction_method` коректно відображають LLM usage.
+6. Перевірити DB metrics ще раз:
+   - completeness по deadline/funding/currency/eligibility/applicant_types/topics/contact;
+   - quality metrics по `unknown_status`, `needs_manual_review`, suspicious funding;
+   - sample review по EU, Diia і Prostir records.
+
+Exit criteria для переходу до Stage 6:
+
+- EU більше не має obvious fake funding values з IDs/reference numbers.
+- Diia більше не має classification codes у funding fields.
+- Diia open-ended programs мають зрозумілий status або manual review reason.
+- Topics стали менш noisy і краще пояснюються evidence.
+- `extract-features --use-llm` проходить без failed rows на поточному dataset.
+- DB metrics достатньо чисті для cheap filtering і shortlist scoring.
+
+Фактично зроблено:
+
+- Bumped `NORMALIZATION_VERSION` до `stage5-deterministic-v2`.
+- EU funding extraction:
+  - JSON budget payloads без `minContribution`/`maxContribution` більше не дають fake funding з IDs/reference numbers;
+  - `20xx` years з deadline/context більше не можуть ставати funding amount;
+  - якщо EU payload має `minContribution`/`maxContribution`, `funding_amount_text` формується як clean amount range, наприклад `EUR 15 000 000 - 25 000 000`.
+- Diia funding validation:
+  - KVED/classification values типу `01.2` відкидаються і не потрапляють у normalized funding fields;
+  - валідні amount values типу `до 400 000` зберігаються.
+- Diia status:
+  - active finance pages без explicit deadline трактуються як open/open-ended;
+  - broad word `заверш` більше не закриває програму без явної фрази про закриття прийому заявок.
+- Topics cleanup:
+  - taxonomy extraction використовує focused content text, а не весь raw payload/page metadata;
+  - generic topics типу `гранти`, `фінансування`, `business` видаляються;
+  - broad topic triggers `local` і `бізнес` зменшено, щоб не створювати noisy tags.
+- Додано regression tests для EU fake IDs, EU deadline year, EU JSON budget range, Diia KVED, Diia open-ended status і noisy raw payload topics.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage5_extraction -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests`
+- `docker compose exec app grant-tool extract-features --limit 100`
+
+Поточні DB metrics після deterministic rerun на 30 records:
+
+- `diia-business`: total 10, unknown_status 0, suspicious_funding 0, no_topics 2.
+- `eu-funding`: total 10, unknown_status 6, suspicious_funding 0, no_topics 8, manual_review 7.
+- `prostir`: total 10, unknown_status 0, suspicious_funding 0, no_topics 0.
+
+Висновок: Stage 5 cleanup прибрав головні parser bugs для funding/status. Перед production-quality Stage 6 все ще бажано rerun `extract-features --use-llm`, бо EU API records часто мають мало content для deterministic eligibility/topics.
+
 ## Stage 6: Cheap filtering і shortlist
 
 Ціль: не аналізувати всі гранти глибоко, а спершу звузити список.
@@ -809,6 +890,87 @@ Status: done
 - Система швидко відсікає нерелевантні гранти.
 - Схожість до попередніх подач піднімає релевантні гранти вище у shortlist.
 - LLM і vector similarity не витрачаються на весь датасет.
+
+Статус реалізації Stage 6: done for MVP.
+
+Фактично зроблено:
+
+- Додано package `grant_tool/matching`.
+- Додано `ShortlistMatchingService`.
+- Додано `MATCHING_VERSION = stage6-shortlist-v1`.
+- Додано CLI:
+  - `grant-tool match`;
+  - `grant-tool match --client <client-slug>`;
+  - `grant-tool match --top-n 5 --min-score 0.20`;
+  - `grant-tool match --grant-limit 50`.
+- Додано repository methods:
+  - `list_client_profiles`;
+  - `list_grants_for_matching`;
+  - `list_application_history_for_client`.
+- Matching створює `MatchRun` зі status `success` і parameters.
+- Results зберігаються у `grant_client_matches`.
+- Для кожного match зберігаються:
+  - `score`;
+  - `rank`;
+  - `hard_filter_passed`;
+  - `filter_reasons`;
+  - `keyword_score`;
+  - `history_score`;
+  - `manual_checks`;
+  - `evidence`;
+  - `match_metadata.score_breakdown`.
+
+Hard filters:
+
+- closed grants відсікаються;
+- grants з deadline у минулому відсікаються;
+- country mismatch відсікається;
+- applicant type mismatch відсікається;
+- explicit restriction conflict відсікається;
+- training/tender/procurement/non-grant opportunity відсікається;
+- company clients не отримують nonprofit-only grants навіть якщо source/LLM noisy applicant types додали `company`.
+
+Soft handling:
+
+- `unknown` status не блокує match, але додає manual check;
+- missing deadline/country/applicant_types не блокує match, але додає manual checks;
+- excluded topics знижують score;
+- application history дає positive boost;
+- `lost`, `rejected`, `not_submitted` не створюють penalty.
+
+Scoring:
+
+- final score = keyword score + application history boost + small extraction confidence bonus;
+- vector score і LLM score залишаються `None` до Stage 7/8;
+- low score records не зберігаються, якщо нижче `min_score`;
+- top N зберігається окремо для кожного client profile.
+
+Перевірено:
+
+- `poetry run python -m unittest tests.test_stage6_matching -v`
+- `poetry run python -m unittest`
+- `poetry run python -m compileall grant_tool tests`
+- `poetry run grant-tool match --help`
+- `docker compose exec app grant-tool match --top-n 5 --min-score 0.20`
+
+Docker smoke на поточній DB:
+
+- clients: 5
+- grants: 52
+- evaluated: 260
+- saved: 3
+- filtered: 257
+
+Висновок: Stage 6 працює як суворий cheap shortlist. Recall поки обмежений, але це очікувано до Stage 7 vector similarity.
+
+Важливий принцип для Stage 6+:
+
+- Поточні grants у локальній DB є випадковим sample, а не ground truth dataset.
+- Не підганяти matching logic під конкретні grants, які зараз лежать у DB.
+- Не додавати rules тільки тому, що вони покращують поточні 52 records.
+- Додавати тільки generic rules, які мають сенс для багатьох джерел і майбутніх datasets.
+- Якщо потрібні source-specific або language-specific евристики, виносити їх у конфігуровані rule sets з evidence, а не ховати як ad hoc logic.
+- Stage 7 має будувати generic matching architecture: structured hard filters, semantic/vector similarity, history boost і explainable score breakdown.
 
 ## Stage 7: Vector similarity і matching score
 

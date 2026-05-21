@@ -226,6 +226,23 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(grant.status, "open")
         self.assertEqual(grant.opportunity_type, "grant")
 
+    def test_gurt_connector_returns_error_when_list_fetch_fails(self) -> None:
+        list_url = "https://gurt.org.ua/news/grants/"
+        source = self.source(
+            slug="gurt",
+            access_strategy=AccessStrategy.HTML,
+            base_url="https://gurt.org.ua",
+            list_url=list_url,
+        )
+        connector = GurtConnector(source=source, http_client=FakeHttpClient({}))
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.grants), 0)
+        self.assertEqual(len(result.errors), 1)
+        self.assertEqual(result.errors[0].stage, "fetch_list")
+        self.assertEqual(result.errors[0].source_url, list_url)
+
     def test_ingestion_service_saves_snapshots_grants_and_job(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"
         detail_url = "https://www.prostir.ua/grant/test-grant/"
