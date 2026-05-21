@@ -1,19 +1,34 @@
 # Start Guide
 
-Цей документ описує базові команди для локального запуску AI Grant Matching Tool.
+Цей документ описує базовий локальний запуск AI Grant Matching Tool.
 
-## Основний підхід
+## Що зараз реалізовано
 
-Основний спосіб запуску проєкту — через Docker Compose.
+Проєкт уже містить повний локальний MVP flow:
+
+- FastAPI app з health API і dashboard.
+- PostgreSQL 16 з `pgvector`.
+- Redis.
+- one-shot `migrate` service, який запускає Alembic migrations і seed MVP sources.
+- Ingestion для `eu-funding`, `prostir`, `diia-business`, `gurt`.
+- deterministic Stage 5 feature extraction з optional OpenAI LLM enrichment.
+- manual CSV import для client profiles і application history.
+- Stage 6 shortlist matching.
+- Stage 7 embeddings через local hash provider або OpenAI.
+- Stage 8 match explanations через local rule provider або OpenAI.
+- Stage 9 dashboard pages.
+- Celery worker/beat services підготовлені через Docker Compose profiles.
+
+## Основний спосіб запуску
+
+Основний спосіб запуску проєкту - Docker Compose.
 
 Це важливо, бо app залежить не тільки від Python/FastAPI, а й від:
 
 - PostgreSQL з `pgvector`
 - Redis
-- Celery worker у наступних етапах
-- Celery scheduler у наступних етапах
-
-Тому стандартний запуск має бути через одну Docker Compose команду, а не через окремий запуск кожного сервісу.
+- Alembic migrations
+- CLI jobs, які працюють з тією самою database
 
 ## Перший запуск
 
@@ -23,20 +38,26 @@
 cd /Users/vac1k/Projects/ai_replace_grandwriters/grant
 ```
 
-Створити локальний `.env` файл:
+Створити локальний `.env` файл, якщо його ще немає:
 
 ```bash
 cp .env.example .env
 ```
 
-Запустити весь local stack:
+Для повністю локального smoke flow `OPENAI_API_KEY` можна залишити порожнім. OpenAI потрібен тільки для:
+
+- `grant-tool extract-features --use-llm`
+- `grant-tool embed --provider openai`
+- `grant-tool explain-matches --provider openai`
+
+Запустити local stack:
 
 ```bash
 docker compose up --build
 ```
 
-Під час запуску Docker Compose також запускає одноразовий service `migrate`.
-Він автоматично виконує:
+Під час запуску Docker Compose автоматично запускає service `migrate`.
+Він виконує:
 
 ```bash
 alembic upgrade head
@@ -44,21 +65,36 @@ grant-tool seed-sources
 ```
 
 Тобто на чистій базі не треба окремо запускати migrations або seed MVP sources.
-Після першого build наступні щоденні запуски можна робити коротшою командою:
+
+Після першого build щоденний запуск можна робити коротшою командою:
 
 ```bash
 docker compose up
 ```
 
-Після запуску app буде доступний тут:
+## URLs
 
-- dashboard: `http://localhost:8000`
+Після запуску app доступний тут:
+
+- dashboard overview: `http://localhost:8000/`
 - grants: `http://localhost:8000/grants`
 - clients: `http://localhost:8000/clients`
 - matches: `http://localhost:8000/matches`
-- report: `http://localhost:8000/report`
+- report view: `http://localhost:8000/report`
 - health: `http://localhost:8000/api/v1/health`
 - OpenAPI docs: `http://localhost:8000/docs`
+
+Health check:
+
+```bash
+curl http://localhost:8000/api/v1/health
+```
+
+Очікувана відповідь:
+
+```json
+{"status":"ok","service":"AI Grant Matching Tool","environment":"local"}
+```
 
 ## Звичайний щоденний запуск
 
@@ -68,17 +104,168 @@ docker compose up
 docker compose up
 ```
 
-Якщо змінювались dependencies або Dockerfile:
+Якщо змінювались dependencies, Dockerfile або Docker image треба перебудувати:
 
 ```bash
 docker compose up --build
 ```
 
-## Запуск з worker і scheduler
+Для background mode:
 
-Worker і scheduler поки підготовлені для наступних етапів.
+```bash
+docker compose up -d --build
+```
 
-Коли вони будуть потрібні:
+## Базовий MVP smoke flow
+
+Після старту app можна завантажити seed clients/history, зібрати grants, порахувати matches і подивитись dashboard:
+
+```bash
+docker compose exec app grant-tool import-manual-seed
+docker compose exec app grant-tool ingest --all --limit 20
+docker compose exec app grant-tool extract-features --limit 100
+docker compose exec app grant-tool embed --target all --provider hash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
+docker compose exec app grant-tool explain-matches --limit 20 --provider rule
+```
+
+Після цього відкрити:
+
+```text
+http://localhost:8000/
+```
+
+`hash` embeddings і `rule` explanations призначені для локального/offline smoke testing. Для реальної semantic якості використовувати OpenAI provider-и.
+
+## Manual seed data
+
+Manual seed files лежать тут:
+
+- `data/manual_seed/client_profiles.manual.csv`
+- `data/manual_seed/application_history.manual.csv`
+- `data/manual_seed/document_inventory.manual.csv`
+
+Імпорт client profiles і application history разом:
+
+```bash
+docker compose exec app grant-tool import-manual-seed
+```
+
+Окремо:
+
+```bash
+docker compose exec app grant-tool import-clients --file data/manual_seed/client_profiles.manual.csv
+docker compose exec app grant-tool import-application-history --file data/manual_seed/application_history.manual.csv
+```
+
+`document_inventory.manual.csv` зараз є ручним інвентарем документів і не імпортується CLI командою.
+
+## Ingestion
+
+Запустити одне джерело:
+
+```bash
+docker compose exec app grant-tool ingest --source eu-funding --limit 20
+docker compose exec app grant-tool ingest --source prostir --limit 20
+docker compose exec app grant-tool ingest --source diia-business --limit 20
+docker compose exec app grant-tool ingest --source gurt --limit 20
+```
+
+Запустити всі MVP sources:
+
+```bash
+docker compose exec app grant-tool ingest --all --limit 20
+```
+
+`--limit` означає максимальну кількість grants на source. Default value: `20`.
+
+Ingestion зберігає `RawGrantSnapshot`, робить normalized `Grant` upsert і запускає deterministic Stage 5 enrichment перед збереженням grant.
+
+Кожен ingestion запуск створює `JobRun`:
+
+```bash
+docker compose exec app grant-tool jobs list --type ingestion
+```
+
+## Feature Extraction
+
+Stage 5 extraction нормалізує grant feature card:
+
+- `status`
+- `deadline_at` / `deadline_text`
+- `funding_amount_*` / `currency`
+- `opportunity_type` / `support_type`
+- `applicant_types`
+- `topics`
+- `countries`
+- `eligibility_text`
+- `restrictions_text`
+- `cofinancing_text`
+- `consortium_text`
+- `extraction_confidence`
+- `extraction_metadata.feature_card`
+- `needs_manual_review`
+
+Повторно запустити extraction для вже збережених grants:
+
+```bash
+docker compose exec app grant-tool extract-features --limit 100
+```
+
+Для конкретного source:
+
+```bash
+docker compose exec app grant-tool extract-features --source prostir --limit 20
+```
+
+Optional LLM extraction:
+
+```bash
+docker compose exec app grant-tool extract-features --limit 100 --use-llm
+```
+
+`--use-llm` працює тільки якщо заданий `OPENAI_API_KEY`.
+
+## Matching, Embeddings And Explanations
+
+Run strict Stage 6 matching:
+
+```bash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20
+```
+
+Generate local deterministic embeddings:
+
+```bash
+docker compose exec app grant-tool embed --target all --provider hash
+```
+
+Run matching with vector similarity:
+
+```bash
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
+```
+
+Generate local deterministic explanations:
+
+```bash
+docker compose exec app grant-tool explain-matches --limit 20 --provider rule
+```
+
+OpenAI variants:
+
+```bash
+docker compose exec app grant-tool embed --target all --provider openai
+docker compose exec app grant-tool explain-matches --limit 20 --provider openai
+```
+
+OpenAI embedding/explanation commands require `OPENAI_API_KEY` in `.env`.
+
+## Worker And Scheduler
+
+Worker і scheduler підготовлені через Docker Compose profiles, але основний MVP flow зараз запускається через CLI commands.
+
+Запуск з worker і scheduler:
 
 ```bash
 docker compose --profile worker --profile scheduler up --build
@@ -93,26 +280,7 @@ docker compose --profile worker --profile scheduler up --build
 - `worker`
 - `beat`
 
-## Зупинка
-
-Зупинити services:
-
-```bash
-docker compose down
-```
-
-`docker compose down` зупиняє і видаляє containers/network, але не видаляє PostgreSQL data volume.
-Дані в database залишаються, бо вони зберігаються у named volume `postgres_data`.
-
-Зупинити services і видалити volumes з database data:
-
-```bash
-docker compose down -v
-```
-
-Команду `docker compose down -v` використовувати обережно, бо вона видаляє локальні дані PostgreSQL.
-
-## Logs
+## Logs And Status
 
 Дивитись logs усіх services:
 
@@ -126,41 +294,13 @@ docker compose logs -f
 docker compose logs -f app
 ```
 
-Дивитись logs database:
-
-```bash
-docker compose logs -f db
-```
-
-Дивитись logs Redis:
-
-```bash
-docker compose logs -f redis
-```
-
-## Status
-
-Подивитись статус services:
+Дивитись статус services:
 
 ```bash
 docker compose ps
 ```
 
-## Health check
-
-Перевірити, що API працює:
-
-```bash
-curl http://localhost:8000/api/v1/health
-```
-
-Очікувана відповідь:
-
-```json
-{"status":"ok","service":"AI Grant Matching Tool","environment":"local"}
-```
-
-## Database migrations
+## Database Migrations
 
 Звичайно migrations запускати вручну не треба: service `migrate` робить це під час `docker compose up`.
 
@@ -182,138 +322,31 @@ docker compose exec app alembic current
 docker compose exec db psql -U grant -d grant -c "\dt"
 ```
 
-## Ingestion
+## Зупинка
 
-Stage 3 ingestion запускається через `grant-tool`. Під час ingestion також автоматично виконується Stage 5 deterministic feature extraction.
-
-Запустити одне джерело:
+Зупинити services:
 
 ```bash
-docker compose exec app grant-tool ingest --source eu-funding --limit 20
-docker compose exec app grant-tool ingest --source prostir --limit 20
-docker compose exec app grant-tool ingest --source diia-business --limit 20
-docker compose exec app grant-tool ingest --source gurt --limit 20
+docker compose down
 ```
 
-Запустити всі MVP sources:
+`docker compose down` зупиняє і видаляє containers/network, але не видаляє PostgreSQL data volume.
+
+Зупинити services і видалити volumes з database data:
 
 ```bash
-docker compose exec app grant-tool ingest --all --limit 20
+docker compose down -v
 ```
 
-`--limit` означає максимальну кількість грантів на source. Default value: `20`.
-
-Кожен ingestion запуск створює `JobRun`, який можна подивитись так:
-
-```bash
-docker compose exec app grant-tool jobs list --type ingestion
-```
-
-## Feature Extraction
-
-Stage 5 extraction нормалізує grant feature card:
-
-- `status`
-- `deadline_at`
-- `funding_amount_*`
-- `currency`
-- `applicant_types`
-- `topics`
-- `countries`
-- `eligibility_text`
-- `restrictions_text`
-- `extraction_confidence`
-- `extraction_metadata`
-
-Повторно запустити extraction для вже збережених grants:
-
-```bash
-docker compose exec app grant-tool extract-features --limit 100
-```
-
-Для конкретного source:
-
-```bash
-docker compose exec app grant-tool extract-features --source prostir --limit 20
-```
-
-Optional LLM extraction:
-
-```bash
-docker compose exec app grant-tool extract-features --limit 100 --use-llm
-```
-
-`--use-llm` працює тільки якщо заданий `OPENAI_API_KEY`. LLM prompt просить витягувати тільки факти з raw source text і не вигадувати відсутні дані.
-
-## OpenAPI docs
-
-FastAPI автоматично генерує API документацію.
-
-Відкрити в браузері:
-
-```text
-http://localhost:8000/docs
-```
+Команду `docker compose down -v` використовувати обережно, бо вона видаляє локальні дані PostgreSQL.
 
 ## Локальний запуск без Docker
 
-Цей спосіб не є основним.
-
-Його можна використовувати тільки для точкового debugging:
+Цей спосіб не є основним. Він потребує локальних PostgreSQL/Redis з URL з `.env`.
 
 ```bash
 poetry install
+poetry run alembic upgrade head
+poetry run grant-tool seed-sources
 poetry run uvicorn grant_tool.main:app --reload
 ```
-
-Для нормальної розробки використовувати Docker Compose.
-
-## Поточні services
-
-`app`:
-
-- FastAPI application
-- port `8000`
-- команда всередині container: `uvicorn grant_tool.main:app --host 0.0.0.0 --port 8000 --reload`
-
-`migrate`:
-
-- одноразовий startup service
-- запускається перед `app`, `worker` і `beat`
-- команда всередині container: `alembic upgrade head && grant-tool seed-sources`
-- завершується після успішної міграції і seed MVP sources
-
-`db`:
-
-- PostgreSQL 16
-- image: `pgvector/pgvector:pg16`
-- database: `grant`
-- user: `grant`
-- password: `grant`
-- port `5432`
-
-`redis`:
-
-- Redis 7
-- port `6379`
-- broker для Celery
-
-`worker`:
-
-- Celery worker
-- запускається тільки з profile `worker`
-
-`beat`:
-
-- Celery scheduler
-- запускається тільки з profile `scheduler`
-
-## Основні правила
-
-- Не запускати app вручну як основний workflow.
-- Не запускати PostgreSQL або Redis окремо, якщо працюємо над MVP.
-- Нові runtime services треба додавати в `docker-compose.yml`.
-- README має бути коротким, а детальні команди мають жити в `docs/start.md`.
-- `.env` використовується Docker Compose для environment variables, але не має копіюватись у Docker image або монтуватись у app container.
-- `docker compose down` не видаляє database data.
-- `docker compose down -v` видаляє database data і використовується тільки коли треба повністю скинути локальну базу.
