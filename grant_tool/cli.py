@@ -13,6 +13,7 @@ from grant_tool.explanations import MatchExplanationService
 from grant_tool.extraction import FeatureExtractionService
 from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
 from grant_tool.ingestion.service import IngestionService
+from grant_tool.ingestion.types import DiscoveryMode
 from grant_tool.matching import ShortlistMatchingService
 from grant_tool.sources import seed_mvp_sources
 
@@ -130,7 +131,7 @@ def _cmd_ingest(args: argparse.Namespace) -> None:
         service = IngestionService(repository=repository, connector_classes=CONNECTOR_CLASSES)
 
         for source_slug in source_slugs:
-            summary = service.run_source(source_slug, limit=args.limit)
+            summary = service.run_source(source_slug, limit=args.limit, mode=args.mode)
             print(
                 f"{summary.source_slug}: {summary.status} "
                 f"processed={summary.processed_count} "
@@ -273,6 +274,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest_source.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), help="Source slug to ingest")
     ingest_source.add_argument("--all", action="store_true", help="Ingest all registered MVP sources")
     ingest.add_argument("--limit", type=int, default=20, help="Maximum grants per source")
+    ingest.add_argument(
+        "--mode",
+        choices=[mode.value for mode in DiscoveryMode],
+        default=DiscoveryMode.INCREMENTAL.value,
+        help="Discovery mode: incremental skips known detail items; backfill refetches them",
+    )
     ingest.set_defaults(func=_cmd_ingest)
 
     extract_features = subparsers.add_parser(

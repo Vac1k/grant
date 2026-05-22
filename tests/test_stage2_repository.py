@@ -7,8 +7,9 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from grant_tool.db import Base
-from grant_tool.db.models import AccessStrategy, JobStatus, JobType, Source
+from grant_tool.db.models import AccessStrategy, DiscoveredGrantItem, JobStatus, JobType, Source
 from grant_tool.db.repositories import GrantRepository
+from grant_tool.ingestion.types import DetailFetchStatus, DiscoveredGrantItemDraft, DiscoveryStatus
 from grant_tool.sources import seed_mvp_sources
 
 
@@ -100,6 +101,50 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertEqual(history.result, "lost")
         self.assertEqual(match.score, Decimal("0.8123"))
         self.assertEqual(report.match_run_id, match_run.id)
+
+    def test_stage1_discovered_item_upsert_tracks_known_items(self) -> None:
+        source = self.repository.upsert_source(
+            slug="test-source",
+            name="Test Source",
+            base_url="https://example.com",
+            access_strategy=AccessStrategy.API,
+            api_url="https://example.com/api",
+        )
+        draft = DiscoveredGrantItemDraft(
+            source_url="https://example.com/grants/1?utm_source=test",
+            canonical_url="https://example.com/grants/1",
+            source_record_id="grant-1",
+            title_hint="AI innovation grant",
+            listing_url="https://example.com/api",
+            listing_position=1,
+            content_hash="b" * 64,
+            discovery_metadata={"strategy": "api"},
+        )
+
+        first_item, first_created = self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=draft,
+        )
+        second_item, second_created = self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=draft,
+        )
+        self.repository.mark_discovered_detail_status(
+            second_item,
+            detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN,
+            metadata={"last_skip_reason": "known_discovered_item"},
+        )
+        discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
+
+        self.assertTrue(first_created)
+        self.assertFalse(second_created)
+        self.assertEqual(first_item.id, second_item.id)
+        self.assertEqual(discovered_count, 1)
+        self.assertEqual(second_item.discovery_status, DiscoveryStatus.KNOWN.value)
+        self.assertEqual(second_item.detail_fetch_status, DetailFetchStatus.SKIPPED_KNOWN.value)
+        self.assertEqual(second_item.discovery_metadata["last_skip_reason"], "known_discovered_item")
 
     def test_stage25_job_lifecycle(self) -> None:
         source = self.repository.upsert_source(

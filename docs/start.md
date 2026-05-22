@@ -68,7 +68,7 @@ curl http://localhost:8000/api/v1/health
 
 ```bash
 docker compose exec app grant-tool import-manual-seed
-docker compose exec app grant-tool ingest --all --limit 20
+docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
 docker compose exec app grant-tool extract-features --limit 100
 docker compose exec app grant-tool embed --target all --provider hash
 docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
@@ -91,22 +91,30 @@ docker compose exec app grant-tool import-application-history --file data/manual
 Усі джерела:
 
 ```bash
-docker compose exec app grant-tool ingest --all --limit 20
+docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
 ```
 
 Окремі джерела:
 
 ```bash
-docker compose exec app grant-tool ingest --source eu-funding --limit 20
-docker compose exec app grant-tool ingest --source prostir --limit 20
-docker compose exec app grant-tool ingest --source diia-business --limit 20
-docker compose exec app grant-tool ingest --source gurt --limit 20
+docker compose exec app grant-tool ingest --source eu-funding --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source prostir --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source diia-business --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source gurt --limit 20 --mode incremental
 ```
+
+`incremental` перечитує listing/RSS/API/search endpoint, але пропускає detail-завантаження для вже відомих item-level грантів. Для повторного detail-завантаження відомих item можна запустити `--mode backfill`.
 
 Перевірити ingestion jobs:
 
 ```bash
 docker compose exec app grant-tool jobs list --type ingestion
+```
+
+Перевірити знайдені Stage 1 item:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_status, detail_fetch_status, count(*) from discovered_grant_items group by source_slug, discovery_status, detail_fetch_status order by source_slug;"
 ```
 
 ## Feature Extraction

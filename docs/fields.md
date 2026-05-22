@@ -40,6 +40,68 @@ Seeded source slugs:
 - `diia-business`
 - `gurt`
 
+## Discovered Grant Items
+
+Таблиця: `discovered_grant_items`
+
+Це реалізована Stage 1 таблиця для item-level результатів пошуку. Вона не замінює `raw_grant_snapshots` і `grants`.
+
+Поля:
+
+- `id`
+- `source_id`
+- `source_slug`
+- `source_url`
+- `canonical_url`
+- `source_record_id`
+- `title_hint`
+- `summary_hint`
+- `published_at_hint`
+- `deadline_hint`
+- `listing_url`
+- `listing_position`
+- `first_seen_at`
+- `last_seen_at`
+- `discovery_status`
+- `detail_fetch_status`
+- `content_hash`
+- `metadata`
+
+Атрибут моделі для DB-колонки `metadata`:
+
+- `discovery_metadata`
+
+Значення статусу `discovery_status`:
+
+- `new`
+- `known`
+- `skipped`
+- `failed`
+
+Значення статусу `detail_fetch_status`:
+
+- `not_fetched`
+- `fetched`
+- `failed`
+- `skipped_known`
+
+Обмеження та індекси:
+
+- unique: `source_id`, `source_record_id`
+- unique: `source_id`, `canonical_url`
+- index: `source_id`, `discovery_status`
+- index: `source_id`, `detail_fetch_status`
+- index: `source_id`, `content_hash`
+- index: `last_seen_at`
+
+Як використовується:
+
+- `discover` перечитує listing/RSS/API/search endpoint під час кожного ingestion запуску;
+- новизна визначається через `source_record_id`, `canonical_url` або item-level `content_hash`;
+- у режимі `incremental` відомий item отримує `discovery_status=known` і `detail_fetch_status=skipped_known`;
+- у режимі `backfill` відомий item може повторно пройти `fetch_detail` і `normalize`;
+- detail payload після завантаження зберігається не тут, а в `raw_grant_snapshots`.
+
 ## Raw Grant Snapshots
 
 Table: `raw_grant_snapshots`

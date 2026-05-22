@@ -3,7 +3,53 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
+
+
+class DiscoveryMode(StrEnum):
+    BACKFILL = "backfill"
+    INCREMENTAL = "incremental"
+
+
+class DiscoveryStatus(StrEnum):
+    NEW = "new"
+    KNOWN = "known"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class DetailFetchStatus(StrEnum):
+    NOT_FETCHED = "not_fetched"
+    FETCHED = "fetched"
+    FAILED = "failed"
+    SKIPPED_KNOWN = "skipped_known"
+
+
+@dataclass(slots=True)
+class DiscoveredGrantItemDraft:
+    source_url: str
+    canonical_url: str | None = None
+    source_record_id: str | None = None
+    title_hint: str | None = None
+    summary_hint: str | None = None
+    published_at_hint: datetime | None = None
+    deadline_hint: str | None = None
+    listing_url: str | None = None
+    listing_position: int | None = None
+    content_hash: str | None = None
+    discovery_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def identity_metadata(self) -> dict[str, Any]:
+        return {
+            "source_url": self.source_url,
+            "canonical_url": self.canonical_url,
+            "source_record_id": self.source_record_id,
+            "title_hint": self.title_hint,
+            "listing_url": self.listing_url,
+            "listing_position": self.listing_position,
+            "content_hash": self.content_hash,
+        }
 
 
 @dataclass(slots=True)

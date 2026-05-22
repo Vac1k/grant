@@ -13,6 +13,7 @@ from grant_tool.db.models import (
     AccessStrategy,
     ApplicationHistory,
     ClientProfile,
+    DiscoveredGrantItem,
     Grant,
     GrantClientMatch,
     JobRun,
@@ -23,6 +24,7 @@ from grant_tool.db.models import (
     Report,
     Source,
 )
+from grant_tool.ingestion.types import DetailFetchStatus, DiscoveredGrantItemDraft, DiscoveryStatus
 
 
 def _enum_value(value: str | StrEnum) -> str:
@@ -254,6 +256,104 @@ class GrantRepository:
         self.session.add(snapshot)
         self.session.flush()
         return snapshot
+
+    def get_discovered_item_by_identity(
+        self,
+        *,
+        source_id: uuid.UUID,
+        source_record_id: str | None = None,
+        canonical_url: str | None = None,
+        content_hash: str | None = None,
+    ) -> DiscoveredGrantItem | None:
+        if source_record_id:
+            item = self.session.scalar(
+                select(DiscoveredGrantItem).where(
+                    DiscoveredGrantItem.source_id == source_id,
+                    DiscoveredGrantItem.source_record_id == source_record_id,
+                )
+            )
+            if item is not None:
+                return item
+
+        if canonical_url:
+            item = self.session.scalar(
+                select(DiscoveredGrantItem).where(
+                    DiscoveredGrantItem.source_id == source_id,
+                    DiscoveredGrantItem.canonical_url == canonical_url,
+                )
+            )
+            if item is not None:
+                return item
+
+        if content_hash:
+            return self.session.scalar(
+                select(DiscoveredGrantItem).where(
+                    DiscoveredGrantItem.source_id == source_id,
+                    DiscoveredGrantItem.content_hash == content_hash,
+                )
+            )
+        return None
+
+    def upsert_discovered_item(
+        self,
+        *,
+        source_id: uuid.UUID,
+        source_slug: str,
+        draft: DiscoveredGrantItemDraft,
+    ) -> tuple[DiscoveredGrantItem, bool]:
+        now = datetime.now(UTC)
+        item = self.get_discovered_item_by_identity(
+            source_id=source_id,
+            source_record_id=draft.source_record_id,
+            canonical_url=draft.canonical_url,
+            content_hash=draft.content_hash,
+        )
+        was_created = item is None
+        values = {
+            "source_slug": source_slug,
+            "source_url": draft.source_url,
+            "canonical_url": draft.canonical_url,
+            "source_record_id": draft.source_record_id,
+            "title_hint": draft.title_hint,
+            "summary_hint": draft.summary_hint,
+            "published_at_hint": draft.published_at_hint,
+            "deadline_hint": draft.deadline_hint,
+            "listing_url": draft.listing_url,
+            "listing_position": draft.listing_position,
+            "last_seen_at": now,
+            "content_hash": draft.content_hash,
+            "discovery_metadata": draft.discovery_metadata,
+        }
+
+        if item is None:
+            item = DiscoveredGrantItem(
+                source_id=source_id,
+                discovery_status=DiscoveryStatus.NEW.value,
+                detail_fetch_status=DetailFetchStatus.NOT_FETCHED.value,
+                **values,
+            )
+            self.session.add(item)
+        else:
+            values["discovery_status"] = DiscoveryStatus.KNOWN.value
+            values["discovery_metadata"] = _merge_metadata(item.discovery_metadata, draft.discovery_metadata)
+            for field, value in values.items():
+                setattr(item, field, value)
+
+        self.session.flush()
+        return item, was_created
+
+    def mark_discovered_detail_status(
+        self,
+        item: DiscoveredGrantItem,
+        *,
+        detail_fetch_status: str | DetailFetchStatus,
+        metadata: dict[str, Any] | None = None,
+    ) -> DiscoveredGrantItem:
+        item.detail_fetch_status = _enum_value(detail_fetch_status)
+        if metadata:
+            item.discovery_metadata = _merge_metadata(item.discovery_metadata, metadata)
+        self.session.flush()
+        return item
 
     def upsert_grant(
         self,

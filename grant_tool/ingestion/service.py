@@ -10,7 +10,13 @@ from grant_tool.extraction import FeatureExtractionService
 from grant_tool.ingestion.base import BaseConnector
 from grant_tool.ingestion.hash import content_hash
 from grant_tool.ingestion.http import HttpClient
-from grant_tool.ingestion.types import ConnectorError, FetchedGrant
+from grant_tool.ingestion.types import (
+    ConnectorError,
+    DetailFetchStatus,
+    DiscoveredGrantItemDraft,
+    DiscoveryMode,
+    FetchedGrant,
+)
 
 
 @dataclass(slots=True)
@@ -40,7 +46,14 @@ class IngestionService:
         self.http_client_factory = http_client_factory
         self.feature_extractor = feature_extractor or FeatureExtractionService()
 
-    def run_source(self, source_slug: str, *, limit: int = 20) -> IngestionSummary:
+    def run_source(
+        self,
+        source_slug: str,
+        *,
+        limit: int = 20,
+        mode: DiscoveryMode | str = DiscoveryMode.INCREMENTAL,
+    ) -> IngestionSummary:
+        discovery_mode = DiscoveryMode(mode)
         source = self.repository.get_source_by_slug(source_slug)
         if source is None:
             raise ValueError(f"Unknown source: {source_slug}. Run grant-tool seed-sources first.")
@@ -51,9 +64,12 @@ class IngestionService:
         job = self.repository.start_job(
             job_type=JobType.INGESTION,
             source_id=source.id,
-            job_metadata={"source_slug": source.slug, "limit": limit},
+            job_metadata={"source_slug": source.slug, "limit": limit, "mode": discovery_mode.value},
         )
         errors: list[ConnectorError] = []
+        discovered_count = 0
+        new_discovered_count = 0
+        known_discovered_count = 0
         settings = get_settings()
         if self.http_client_factory:
             http_client = self.http_client_factory(source.rate_limit_seconds)
@@ -65,11 +81,47 @@ class IngestionService:
 
         try:
             connector = connector_class(source=source, http_client=http_client)
-            result = connector.run(limit=limit)
-            errors.extend(result.errors)
-            for fetched_grant in result.grants:
+            try:
+                discovered_items = connector.discover(limit=limit, mode=discovery_mode)
+            except Exception as exc:
+                discovered_items = []
+                errors.append(
+                    ConnectorError(
+                        message=str(exc),
+                        stage="discover",
+                        source_url=source.list_url or source.feed_url or source.api_url or source.base_url,
+                    )
+                )
+
+            for discovered_draft in discovered_items:
+                discovered_count += 1
+                discovered_item, was_discovered_created = self.repository.upsert_discovered_item(
+                    source_id=source.id,
+                    source_slug=source.slug,
+                    draft=discovered_draft,
+                )
+                if was_discovered_created:
+                    new_discovered_count += 1
+                else:
+                    known_discovered_count += 1
+
+                if discovery_mode == DiscoveryMode.INCREMENTAL and not was_discovered_created:
+                    self.repository.mark_discovered_detail_status(
+                        discovered_item,
+                        detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN,
+                        metadata={"last_skip_reason": "known_discovered_item"},
+                    )
+                    self.repository.increment_job_counters(job, processed=1, skipped=1)
+                    continue
+
                 try:
+                    fetched_grant = self._fetch_and_normalize(connector, discovered_draft)
                     was_created = self._save_fetched_grant(fetched_grant, source_id=source.id, source_slug=source.slug)
+                    self.repository.mark_discovered_detail_status(
+                        discovered_item,
+                        detail_fetch_status=DetailFetchStatus.FETCHED,
+                        metadata={"latest_grant_source_url": fetched_grant.normalized.source_url},
+                    )
                     if was_created:
                         self.repository.increment_job_counters(job, processed=1, created=1)
                     else:
@@ -78,15 +130,24 @@ class IngestionService:
                     errors.append(
                         ConnectorError(
                             message=str(exc),
-                            source_url=fetched_grant.normalized.source_url,
-                            stage="save",
+                            source_url=discovered_draft.source_url,
+                            stage="fetch_detail_normalize_save",
                         )
+                    )
+                    self.repository.mark_discovered_detail_status(
+                        discovered_item,
+                        detail_fetch_status=DetailFetchStatus.FAILED,
+                        metadata={"last_detail_error": str(exc)},
                     )
                     self.repository.increment_job_counters(job, processed=1, failed=1)
 
             metadata: dict[str, Any] = {
                 "source_slug": source.slug,
                 "limit": limit,
+                "mode": discovery_mode.value,
+                "discovered_count": discovered_count,
+                "new_discovered_count": new_discovered_count,
+                "known_discovered_count": known_discovered_count,
                 "connector_error_count": len(errors),
                 "connector_errors": [self._error_to_dict(error) for error in errors[:20]],
             }
@@ -115,6 +176,12 @@ class IngestionService:
             failed_count=job.failed_count,
             errors=errors,
         )
+
+    @staticmethod
+    def _fetch_and_normalize(connector: BaseConnector, discovered_draft: DiscoveredGrantItemDraft) -> FetchedGrant:
+        detail = connector.fetch_detail(discovered_draft)
+        normalized = connector.normalize(discovered_draft, detail)
+        return connector.to_fetched_grant(discovered_draft, detail, normalized)
 
     def _save_fetched_grant(self, fetched_grant: FetchedGrant, *, source_id: Any, source_slug: str | None = None) -> bool:
         fetched_grant = self.feature_extractor.enrich_fetched_grant(fetched_grant, source_slug=source_slug)

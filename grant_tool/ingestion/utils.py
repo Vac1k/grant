@@ -4,7 +4,7 @@ import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from html import unescape
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -71,6 +71,35 @@ def absolute_url(base_url: str, url: str | None) -> str | None:
     if not url:
         return None
     return urljoin(base_url, url)
+
+
+def canonicalize_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlsplit(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return clean_text(url)
+
+    tracking_prefixes = ("utm_",)
+    tracking_keys = {
+        "fbclid",
+        "gclid",
+        "gbraid",
+        "wbraid",
+        "mc_cid",
+        "mc_eid",
+        "yclid",
+    }
+    query_pairs = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        lowered = key.lower()
+        if lowered in tracking_keys or any(lowered.startswith(prefix) for prefix in tracking_prefixes):
+            continue
+        query_pairs.append((key, value))
+
+    query = urlencode(sorted(query_pairs), doseq=True)
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
 
 
 def first_text(values: object) -> str | None:

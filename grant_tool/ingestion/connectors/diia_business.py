@@ -7,8 +7,16 @@ from urllib.parse import urlparse
 
 from grant_tool.ingestion.base import BaseConnector
 from grant_tool.ingestion.connectors.common import extract_filtered_links, parse_sitemap_urls
-from grant_tool.ingestion.types import ConnectorError, ConnectorResult, FetchedGrant, NormalizedGrantDraft
+from grant_tool.ingestion.hash import content_hash
+from grant_tool.ingestion.types import (
+    DiscoveredGrantItemDraft,
+    DiscoveryMode,
+    FetchedDetail,
+    FetchedGrant,
+    NormalizedGrantDraft,
+)
 from grant_tool.ingestion.utils import (
+    canonicalize_url,
     clean_text,
     extract_deadline,
     extract_documents,
@@ -22,11 +30,10 @@ class DiiaBusinessConnector(BaseConnector):
     source_slug = "diia-business"
     default_api_url = "https://api.business.diia.gov.ua/api/front"
 
-    def run(self, *, limit: int) -> ConnectorResult:
-        errors: list[ConnectorError] = []
-        grants = self._run_api(limit=limit, errors=errors)
-        if grants:
-            return ConnectorResult(source_slug=self.source_slug, grants=grants, errors=errors)
+    def discover(self, *, limit: int, mode: DiscoveryMode) -> list[DiscoveredGrantItemDraft]:
+        discovered = self._discover_api(limit=limit)
+        if discovered:
+            return discovered
 
         detail_urls: list[tuple[str, str | None]] = []
         if self.source.sitemap_url:
@@ -34,8 +41,8 @@ class DiiaBusinessConnector(BaseConnector):
                 sitemap = self.http.get(self.source.sitemap_url)
                 urls = self._finance_urls_from_sitemap(sitemap.text, limit=limit)
                 detail_urls.extend((url, None) for url in urls)
-            except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), stage="fetch_sitemap", source_url=self.source.sitemap_url))
+            except Exception:
+                pass
 
         if not detail_urls and self.source.list_url:
             try:
@@ -49,56 +56,88 @@ class DiiaBusinessConnector(BaseConnector):
                         limit=limit,
                     )
                 )
-            except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), stage="fetch_list", source_url=self.source.list_url))
+            except Exception:
+                pass
 
-        grants: list[FetchedGrant] = []
-        for url, title_hint in detail_urls[:limit]:
-            try:
-                detail = self.http.get(url)
-                grants.append(
-                    self._parse_detail(
-                        source_url=url,
-                        title_hint=title_hint,
-                        detail_html=detail.text,
-                        http_status=detail.status_code,
-                        content_type=detail.content_type,
-                    )
-                )
-            except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), source_url=url, stage="fetch_detail"))
-        return ConnectorResult(source_slug=self.source_slug, grants=grants, errors=errors)
+        return [
+            DiscoveredGrantItemDraft(
+                source_url=url,
+                canonical_url=canonicalize_url(url),
+                source_record_id=url,
+                title_hint=title_hint,
+                listing_url=self.source.sitemap_url or self.source.list_url,
+                listing_position=position,
+                content_hash=content_hash({"source_url": url, "title_hint": title_hint}),
+                discovery_metadata={
+                    "discovery_kind": "sitemap_or_html",
+                    "listing_url": self.source.sitemap_url or self.source.list_url,
+                },
+            )
+            for position, (url, title_hint) in enumerate(detail_urls[:limit], start=1)
+        ]
 
-    def _run_api(self, *, limit: int, errors: list[ConnectorError]) -> list[FetchedGrant]:
+    def _discover_api(self, *, limit: int) -> list[DiscoveredGrantItemDraft]:
         api_url = (self.source.api_url or self.default_api_url).rstrip("/")
         list_url = f"{api_url}/finance"
         try:
             response = self.http.get(list_url, params={"take": limit, "skip": 0, "date": self._cache_uid()})
-        except Exception as exc:
-            errors.append(ConnectorError(message=str(exc), stage="fetch_api_list", source_url=list_url))
+        except Exception:
             return []
 
         payload = self._json(response)
         if not isinstance(payload, dict):
-            errors.append(ConnectorError(message="Diia finance API returned a non-object payload", stage="parse_api_list", source_url=list_url))
             return []
 
         rows = payload.get("data")
         if not isinstance(rows, list):
-            errors.append(ConnectorError(message="Diia finance API response does not contain data[]", stage="parse_api_list", source_url=list_url))
             return []
 
-        grants: list[FetchedGrant] = []
-        for row in rows[:limit]:
+        discovered: list[DiscoveredGrantItemDraft] = []
+        for position, row in enumerate(rows[:limit], start=1):
             if not isinstance(row, dict):
                 continue
             slug = str(row.get("slug") or "").strip()
             if not slug:
                 continue
-            detail_payload: dict[str, Any] = {"service": row, "similar": []}
-            detail_status = response.status_code
-            detail_content_type = response.content_type
-            detail_url = f"{api_url}/finance/service/{slug}"
+            source_url = self._web_finance_url(slug)
+            attributes = self._attributes(row)
+            deadline_hint = self._attribute_value(attributes, "finalProgramTerm", "Кінцевий строк дії програми")
+            discovered.append(
+                DiscoveredGrantItemDraft(
+                    source_url=source_url,
+                    canonical_url=canonicalize_url(source_url),
+                    source_record_id=str(row.get("id") or slug),
+                    title_hint=clean_text(str(row.get("title") or "")),
+                    summary_hint=clean_text(str(row.get("description") or "")),
+                    deadline_hint=deadline_hint,
+                    listing_url=list_url,
+                    listing_position=position,
+                    content_hash=content_hash(row),
+                    discovery_metadata={
+                        "discovery_kind": "diia_business_finance_api",
+                        "api_url": api_url,
+                        "list_url": list_url,
+                        "detail_url": f"{api_url}/finance/service/{slug}",
+                        "http_status": response.status_code,
+                        "content_type": response.content_type,
+                        "raw_row": row,
+                    },
+                )
+            )
+        return discovered
+
+    def fetch_detail(self, item: DiscoveredGrantItemDraft) -> FetchedDetail:
+        raw_row = item.discovery_metadata.get("raw_row")
+        if isinstance(raw_row, dict):
+            detail_payload: dict[str, Any] = {"service": raw_row, "similar": []}
+            detail_status = item.discovery_metadata.get("http_status")
+            detail_content_type = item.discovery_metadata.get("content_type")
+            detail_url = str(item.discovery_metadata.get("detail_url") or "")
+            detail_metadata: dict[str, Any] = {
+                "source": self.source_slug,
+                "detail_url": item.source_url,
+                "api_detail_url": detail_url,
+            }
             try:
                 detail = self.http.get(detail_url, params={"date": self._cache_uid()})
                 detail_status = detail.status_code
@@ -107,15 +146,40 @@ class DiiaBusinessConnector(BaseConnector):
                 if isinstance(candidate, dict) and isinstance(candidate.get("service"), dict):
                     detail_payload = candidate
             except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), source_url=detail_url, stage="fetch_api_detail"))
-            grants.append(
-                self._parse_api_service(
-                    payload=detail_payload,
-                    http_status=detail_status,
-                    content_type=detail_content_type,
-                )
+                detail_metadata["api_detail_error"] = str(exc)
+            return FetchedDetail(
+                source_url=item.source_url,
+                raw_payload=detail_payload,
+                http_status=detail_status,
+                content_type=detail_content_type,
+                metadata=detail_metadata,
             )
-        return grants
+
+        detail = self.http.get(item.source_url)
+        return FetchedDetail(
+            source_url=item.source_url,
+            raw_html=detail.text,
+            http_status=detail.status_code,
+            content_type=detail.content_type,
+            metadata={"source": self.source_slug, "detail_url": item.source_url},
+        )
+
+    def normalize(self, item: DiscoveredGrantItemDraft, detail: FetchedDetail) -> NormalizedGrantDraft:
+        if isinstance(detail.raw_payload, dict):
+            return self._parse_api_service(
+                payload=detail.raw_payload,
+                http_status=detail.http_status or 200,
+                content_type=detail.content_type,
+            ).normalized
+        if not detail.raw_html:
+            raise ValueError("Diia detail does not contain API payload or HTML")
+        return self._parse_detail(
+            source_url=item.source_url,
+            title_hint=item.title_hint,
+            detail_html=detail.raw_html,
+            http_status=detail.http_status or 200,
+            content_type=detail.content_type,
+        ).normalized
 
     def _parse_api_service(
         self,

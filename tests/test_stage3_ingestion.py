@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from grant_tool.db import Base
-from grant_tool.db.models import AccessStrategy, Grant, JobStatus, Source
+from grant_tool.db.models import AccessStrategy, DiscoveredGrantItem, Grant, JobStatus, Source
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.connectors import (
     CONNECTOR_CLASSES,
@@ -20,6 +20,7 @@ from grant_tool.ingestion.connectors import (
 )
 from grant_tool.ingestion.http import HttpResponse
 from grant_tool.ingestion.service import IngestionService
+from grant_tool.ingestion.types import DetailFetchStatus
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -240,7 +241,7 @@ class Stage3IngestionTestCase(unittest.TestCase):
 
         self.assertEqual(len(result.grants), 0)
         self.assertEqual(len(result.errors), 1)
-        self.assertEqual(result.errors[0].stage, "fetch_list")
+        self.assertEqual(result.errors[0].stage, "discover")
         self.assertEqual(result.errors[0].source_url, list_url)
 
     def test_ingestion_service_saves_snapshots_grants_and_job(self) -> None:
@@ -267,11 +268,16 @@ class Stage3IngestionTestCase(unittest.TestCase):
         first = service.run_source("prostir", limit=20)
         second = service.run_source("prostir", limit=20)
         grant_count = self.session.scalar(select(func.count(Grant.id)))
+        discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
+        discovered_item = self.session.scalar(select(DiscoveredGrantItem))
 
         self.assertEqual(first.status, JobStatus.SUCCESS.value)
         self.assertEqual(first.created_count, 1)
-        self.assertEqual(second.updated_count, 1)
+        self.assertEqual(second.updated_count, 0)
+        self.assertEqual(second.skipped_count, 1)
         self.assertEqual(grant_count, 1)
+        self.assertEqual(discovered_count, 1)
+        self.assertEqual(discovered_item.detail_fetch_status, DetailFetchStatus.SKIPPED_KNOWN.value)
 
 
 if __name__ == "__main__":

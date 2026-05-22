@@ -4,9 +4,17 @@ import xml.etree.ElementTree as ET
 
 from grant_tool.ingestion.base import BaseConnector
 from grant_tool.ingestion.connectors.common import extract_filtered_links, parse_xml
-from grant_tool.ingestion.types import ConnectorError, ConnectorResult, FetchedGrant, NormalizedGrantDraft
+from grant_tool.ingestion.hash import content_hash
+from grant_tool.ingestion.types import (
+    DiscoveredGrantItemDraft,
+    DiscoveryMode,
+    FetchedDetail,
+    FetchedGrant,
+    NormalizedGrantDraft,
+)
 from grant_tool.ingestion.utils import (
     absolute_url,
+    canonicalize_url,
     clean_text,
     extract_deadline,
     extract_documents,
@@ -20,17 +28,16 @@ from grant_tool.ingestion.utils import (
 class ProstirConnector(BaseConnector):
     source_slug = "prostir"
 
-    def run(self, *, limit: int) -> ConnectorResult:
+    def discover(self, *, limit: int, mode: DiscoveryMode) -> list[DiscoveredGrantItemDraft]:
         feed_url = self.source.feed_url or self.source.list_url
         if not feed_url:
-            return ConnectorResult(
-                source_slug=self.source_slug,
-                errors=[ConnectorError(message="Source feed_url/list_url is not configured", stage="fetch_list")],
-            )
+            raise ValueError("Source feed_url/list_url is not configured")
         response = self.http.get(feed_url)
         items = self._parse_feed(response.text, limit=limit)
+        listing_url = feed_url
         if not items and self.source.list_url:
             listing = self.http.get(self.source.list_url)
+            listing_url = self.source.list_url
             items = [
                 {
                     "title": title,
@@ -47,24 +54,59 @@ class ProstirConnector(BaseConnector):
                     limit=limit,
                 )
             ]
-        grants: list[FetchedGrant] = []
-        errors: list[ConnectorError] = []
-        for item in items:
+        discovered: list[DiscoveredGrantItemDraft] = []
+        for position, item in enumerate(items[:limit], start=1):
             link = item["link"]
-            try:
-                detail = self.http.get(link)
-                grants.append(
-                    self._parse_detail(
-                        feed_item=item,
-                        detail_html=detail.text,
-                        http_status=detail.status_code,
-                        content_type=detail.content_type,
-                    )
+            if not link:
+                continue
+            discovered.append(
+                DiscoveredGrantItemDraft(
+                    source_url=link,
+                    canonical_url=canonicalize_url(link),
+                    source_record_id=item.get("guid") or link,
+                    title_hint=item.get("title"),
+                    summary_hint=item.get("description"),
+                    published_at_hint=parse_datetime(item.get("pub_date")),
+                    listing_url=listing_url,
+                    listing_position=position,
+                    content_hash=content_hash(item),
+                    discovery_metadata={
+                        "feed_item": item,
+                        "feed_url": feed_url,
+                        "listing_url": listing_url,
+                        "http_status": response.status_code,
+                        "content_type": response.content_type,
+                    },
                 )
-            except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), source_url=link, stage="fetch_detail"))
-                grants.append(self._from_feed_item(item, http_status=response.status_code, content_type=response.content_type))
-        return ConnectorResult(source_slug=self.source_slug, grants=grants, errors=errors)
+            )
+        return discovered
+
+    def fetch_detail(self, item: DiscoveredGrantItemDraft) -> FetchedDetail:
+        detail = self.http.get(item.source_url)
+        return FetchedDetail(
+            source_url=item.source_url,
+            raw_html=detail.text,
+            http_status=detail.status_code,
+            content_type=detail.content_type,
+            metadata={"source": self.source_slug, "detail_url": item.source_url},
+        )
+
+    def normalize(self, item: DiscoveredGrantItemDraft, detail: FetchedDetail) -> NormalizedGrantDraft:
+        feed_item = item.discovery_metadata.get("feed_item")
+        if not isinstance(feed_item, dict):
+            raise ValueError("Prostir discovery item does not contain feed_item metadata")
+        if not detail.raw_html:
+            return self._from_feed_item(
+                feed_item,
+                http_status=detail.http_status,
+                content_type=detail.content_type,
+            ).normalized
+        return self._parse_detail(
+            feed_item=feed_item,
+            detail_html=detail.raw_html,
+            http_status=detail.http_status or 200,
+            content_type=detail.content_type,
+        ).normalized
 
     def _parse_feed(self, xml_text: str, *, limit: int) -> list[dict[str, str | None]]:
         root = parse_xml(xml_text)

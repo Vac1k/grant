@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from grant_tool.ingestion.base import BaseConnector
 from grant_tool.ingestion.connectors.common import extract_filtered_links
-from grant_tool.ingestion.types import ConnectorError, ConnectorResult, FetchedGrant, NormalizedGrantDraft
+from grant_tool.ingestion.hash import content_hash
+from grant_tool.ingestion.types import (
+    DiscoveredGrantItemDraft,
+    DiscoveryMode,
+    FetchedDetail,
+    FetchedGrant,
+    NormalizedGrantDraft,
+)
 from grant_tool.ingestion.utils import (
+    canonicalize_url,
     clean_text,
     extract_deadline,
     extract_documents,
@@ -16,19 +24,10 @@ from grant_tool.ingestion.utils import (
 class GurtConnector(BaseConnector):
     source_slug = "gurt"
 
-    def run(self, *, limit: int) -> ConnectorResult:
+    def discover(self, *, limit: int, mode: DiscoveryMode) -> list[DiscoveredGrantItemDraft]:
         if not self.source.list_url:
-            return ConnectorResult(
-                source_slug=self.source_slug,
-                errors=[ConnectorError(message="Source list_url is not configured", stage="fetch_list")],
-            )
-        try:
-            response = self.http.get(self.source.list_url)
-        except Exception as exc:
-            return ConnectorResult(
-                source_slug=self.source_slug,
-                errors=[ConnectorError(message=str(exc), source_url=self.source.list_url, stage="fetch_list")],
-            )
+            raise ValueError("Source list_url is not configured")
+        response = self.http.get(self.source.list_url)
         links = extract_filtered_links(
             base_url=self.source.base_url,
             html=response.text,
@@ -36,23 +35,44 @@ class GurtConnector(BaseConnector):
             exclude_exact={self.source.list_url},
             limit=limit,
         )
-        grants: list[FetchedGrant] = []
-        errors: list[ConnectorError] = []
-        for source_url, title_hint in links:
-            try:
-                detail = self.http.get(source_url)
-                grants.append(
-                    self._parse_detail(
-                        source_url=source_url,
-                        title_hint=title_hint,
-                        detail_html=detail.text,
-                        http_status=detail.status_code,
-                        content_type=detail.content_type,
-                    )
-                )
-            except Exception as exc:
-                errors.append(ConnectorError(message=str(exc), source_url=source_url, stage="fetch_detail"))
-        return ConnectorResult(source_slug=self.source_slug, grants=grants, errors=errors)
+        return [
+            DiscoveredGrantItemDraft(
+                source_url=source_url,
+                canonical_url=canonicalize_url(source_url),
+                source_record_id=source_url,
+                title_hint=title_hint,
+                listing_url=self.source.list_url,
+                listing_position=position,
+                content_hash=content_hash({"source_url": source_url, "title_hint": title_hint}),
+                discovery_metadata={
+                    "listing_url": self.source.list_url,
+                    "http_status": response.status_code,
+                    "content_type": response.content_type,
+                },
+            )
+            for position, (source_url, title_hint) in enumerate(links, start=1)
+        ]
+
+    def fetch_detail(self, item: DiscoveredGrantItemDraft) -> FetchedDetail:
+        detail = self.http.get(item.source_url)
+        return FetchedDetail(
+            source_url=item.source_url,
+            raw_html=detail.text,
+            http_status=detail.status_code,
+            content_type=detail.content_type,
+            metadata={"source": self.source_slug, "detail_url": item.source_url},
+        )
+
+    def normalize(self, item: DiscoveredGrantItemDraft, detail: FetchedDetail) -> NormalizedGrantDraft:
+        if not detail.raw_html:
+            raise ValueError("GURT detail does not contain HTML")
+        return self._parse_detail(
+            source_url=item.source_url,
+            title_hint=item.title_hint or "Untitled GURT grant",
+            detail_html=detail.raw_html,
+            http_status=detail.http_status or 200,
+            content_type=detail.content_type,
+        ).normalized
 
     def _parse_detail(
         self,

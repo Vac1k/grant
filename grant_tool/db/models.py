@@ -104,6 +104,10 @@ class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="source",
         cascade="all, delete-orphan",
     )
+    discovered_items: Mapped[list[DiscoveredGrantItem]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+    )
     grants: Mapped[list[Grant]] = relationship(back_populates="source")
     job_runs: Mapped[list[JobRun]] = relationship(back_populates="source")
 
@@ -185,6 +189,56 @@ class RawGrantSnapshot(UUIDPrimaryKeyMixin, Base):
 
     source: Mapped[Source] = relationship(back_populates="raw_snapshots")
     grants: Mapped[list[Grant]] = relationship(back_populates="latest_raw_snapshot")
+
+
+class DiscoveredGrantItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "discovered_grant_items"
+    __table_args__ = (
+        UniqueConstraint("source_id", "source_record_id", name="uq_discovered_items_source_record_id"),
+        UniqueConstraint("source_id", "canonical_url", name="uq_discovered_items_canonical_url"),
+        Index("ix_discovered_items_source_status", "source_id", "discovery_status"),
+        Index("ix_discovered_items_detail_status", "source_id", "detail_fetch_status"),
+        Index("ix_discovered_items_last_seen_at", "last_seen_at"),
+        Index("ix_discovered_items_content_hash", "source_id", "content_hash"),
+    )
+
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_url: Mapped[str | None] = mapped_column(Text)
+    source_record_id: Mapped[str | None] = mapped_column(String(255))
+    title_hint: Mapped[str | None] = mapped_column(Text)
+    summary_hint: Mapped[str | None] = mapped_column(Text)
+    published_at_hint: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_hint: Mapped[str | None] = mapped_column(Text)
+    listing_url: Mapped[str | None] = mapped_column(Text)
+    listing_position: Mapped[int | None] = mapped_column(Integer)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    discovery_status: Mapped[str] = mapped_column(String(50), nullable=False, default="new")
+    detail_fetch_status: Mapped[str] = mapped_column(String(50), nullable=False, default="not_fetched")
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    discovery_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+
+    source: Mapped[Source] = relationship(back_populates="discovered_items")
 
 
 class Grant(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -198,31 +198,44 @@ Check imported history:
 docker compose exec db psql -U grant -d grant -c "select client_name, grant_title, result, similarity_weight from application_history order by client_name, grant_title limit 30;"
 ```
 
-## Ingest Real Grant Data
+## Збір Реальних Даних Про Гранти
 
-Ingest all MVP sources, max 20 records per source:
-
-```bash
-docker compose exec app grant-tool ingest --all --limit 20
-```
-
-Ingest one source:
+Зібрати всі MVP-джерела, максимум 20 записів на джерело:
 
 ```bash
-docker compose exec app grant-tool ingest --source eu-funding --limit 20
-docker compose exec app grant-tool ingest --source prostir --limit 20
-docker compose exec app grant-tool ingest --source diia-business --limit 20
-docker compose exec app grant-tool ingest --source gurt --limit 20
+docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
 ```
 
-Implementation notes:
+Зібрати одне джерело:
 
-- EU Funding uses the EU Funding & Tenders search API.
-- Prostir uses RSS discovery plus detail HTML parsing.
-- Diia Business uses the public frontend finance API, which is better than scraping Angular shell pages.
-- GURT uses HTML list/detail parsing.
-- Ingestion stores raw snapshots and upserts normalized grants.
-- Ingestion also runs deterministic Stage 5 enrichment before saving each grant.
+```bash
+docker compose exec app grant-tool ingest --source eu-funding --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source prostir --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source diia-business --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source gurt --limit 20 --mode incremental
+```
+
+Режими:
+
+- `incremental` перечитує listing/RSS/API/search endpoint, оновлює `last_seen_at` і пропускає detail-fetch для вже відомих item-level грантів;
+- `backfill` перечитує listing/RSS/API/search endpoint і повторно робить detail-fetch навіть для відомих item-level грантів.
+
+Перевірити Stage 1 discovery-таблицю:
+
+```bash
+docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_status, detail_fetch_status, count(*) from discovered_grant_items group by source_slug, discovery_status, detail_fetch_status order by source_slug;"
+```
+
+Нотатки реалізації:
+
+- EU Funding використовує EU Funding & Tenders search API.
+- Prostir використовує RSS discovery і HTML detail parsing.
+- Diia Business використовує public frontend finance API, бо це якісніше за scraping Angular shell сторінок.
+- GURT використовує HTML list/detail parsing.
+- Ingestion спочатку зберігає item-level результат пошуку у `discovered_grant_items`.
+- Raw detail payload зберігається у `raw_grant_snapshots`.
+- Нормалізований грант записується або оновлюється у `grants`.
+- Ingestion також запускає deterministic Stage 5 enrichment перед збереженням кожного гранту.
 
 ## Run Stage 5 Feature Extraction
 
@@ -428,6 +441,7 @@ docker compose exec db psql -U grant -d grant -c "delete from grant_client_match
 docker compose exec db psql -U grant -d grant -c "delete from match_runs;"
 docker compose exec db psql -U grant -d grant -c "delete from raw_grant_snapshots;"
 docker compose exec db psql -U grant -d grant -c "delete from grants;"
+docker compose exec db psql -U grant -d grant -c "delete from discovered_grant_items;"
 docker compose exec db psql -U grant -d grant -c "delete from job_runs where job_type in ('ingestion', 'feature_extraction', 'embedding', 'matching', 'llm_extraction');"
 ```
 
@@ -437,6 +451,7 @@ Meaning:
 - `match_runs`: deletes matching run records.
 - `raw_grant_snapshots`: deletes raw HTML/API payload snapshots.
 - `grants`: deletes normalized grant records.
+- `discovered_grant_items`: видаляє Stage 1 item-level записи пошуку.
 - `job_runs`: deletes pipeline job history for grant/matching reruns.
 
 If you also need to reset imported clients/history:
@@ -456,7 +471,7 @@ docker compose up -d --build
 docker compose exec app alembic upgrade head
 docker compose exec app grant-tool seed-sources
 docker compose exec app grant-tool import-manual-seed
-docker compose exec app grant-tool ingest --all --limit 20
+docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
 docker compose exec app grant-tool extract-features --limit 100
 docker compose exec app grant-tool embed --target all --provider hash
 docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
@@ -476,7 +491,7 @@ Use this only when `.env` has a valid `OPENAI_API_KEY`:
 ```bash
 docker compose up -d --build
 docker compose exec app grant-tool import-manual-seed
-docker compose exec app grant-tool ingest --all --limit 20
+docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
 docker compose exec app grant-tool extract-features --limit 100 --use-llm
 docker compose exec app grant-tool embed --target all --provider openai
 docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
