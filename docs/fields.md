@@ -1,49 +1,10 @@
-# Поля даних у реалізованому MVP
+# Existing Data Fields
 
-Цей документ описує фактичну структуру полів, яка зараз реалізована в коді.
+## Sources
 
-Основні джерела правди:
+Table: `sources`
 
-- `grant_tool/db/models.py`
-- `grant_tool/ingestion/types.py`
-- `grant_tool/extraction/service.py`
-
-## Загальний принцип
-
-Система розділяє дані на два рівні:
-
-1. Raw data - оригінальні дані з сайту або API.
-2. Normalized data - очищені поля, які використовуються для dashboard, matching, embeddings і explanations.
-
-Raw data зберігається у `raw_grant_snapshots`.
-
-Normalized grants зберігаються у `grants`.
-
-## MVP-Джерела
-
-Поточні джерела:
-
-- EU Funding & Tenders Portal
-- Prostir
-- Diia Business
-- GURT
-
-Кожне джерело має різну якість структури, тому більшість business fields у `grants` є nullable або мають safe default.
-
-Обов'язковий мінімум для grant:
-
-- `source_id`
-- `source_url`
-- `title`
-- `status`
-
-## `sources`
-
-Таблиця: `sources`
-
-Призначення: описує зовнішнє джерело грантів і спосіб доступу до нього.
-
-Поля:
+Fields:
 
 - `id`
 - `created_at`
@@ -62,7 +23,7 @@ Normalized grants зберігаються у `grants`.
 - `notes`
 - `source_metadata`
 
-`access_strategy` може бути:
+Enum values for `access_strategy`:
 
 - `api`
 - `wp_rest`
@@ -72,20 +33,18 @@ Normalized grants зберігаються у `grants`.
 - `browser`
 - `manual`
 
-Поточні seeded sources:
+Seeded source slugs:
 
 - `eu-funding`
 - `prostir`
 - `diia-business`
 - `gurt`
 
-## `raw_grant_snapshots`
+## Raw Grant Snapshots
 
-Таблиця: `raw_grant_snapshots`
+Table: `raw_grant_snapshots`
 
-Призначення: зберігає оригінальний snapshot даних, отриманих із джерела.
-
-Поля:
+Fields:
 
 - `id`
 - `source_id`
@@ -102,32 +61,20 @@ Normalized grants зберігаються у `grants`.
 - `content_hash`
 - `metadata`
 
-У SQLAlchemy поле називається `snapshot_metadata`, але в базі воно зберігається як колонка `metadata`.
+Model attribute for DB column `metadata`:
 
-Для API-джерел основне поле:
+- `snapshot_metadata`
 
-- `raw_payload`
+Constraints/indexes:
 
-Для HTML/RSS-джерел основні поля:
+- unique: `source_id`, `source_url`, `content_hash`
+- index: `source_id`, `source_record_id`
 
-- `raw_html`
-- `raw_text`
-- `raw_title`
-- `raw_summary`
+## Grants
 
-Deduplication для raw snapshots базується на:
+Table: `grants`
 
-- `source_id`
-- `source_url`
-- `content_hash`
-
-## `grants`
-
-Таблиця: `grants`
-
-Призначення: основна normalized таблиця грантів і фінансових можливостей.
-
-### Identity І Source Fields
+Fields:
 
 - `id`
 - `created_at`
@@ -137,135 +84,30 @@ Deduplication для raw snapshots базується на:
 - `source_record_id`
 - `source_url`
 - `application_url`
-
-`source_url` - сторінка або canonical URL можливості.
-
-`application_url` - URL для подачі, якщо він відрізняється від `source_url`.
-
-### Basic Content Fields
-
 - `title`
 - `summary`
 - `description_text`
 - `language`
 - `status`
-
-`title` і `status` є required.
-
-`description_text` зазвичай містить очищений повний текст сторінки або опис із API.
-
-### Date Fields
-
 - `published_at`
 - `opens_at`
 - `deadline_at`
 - `deadline_text`
-
-`deadline_at` може бути `NULL`, якщо дедлайн не знайдено або програма відкрита без чіткої дати.
-
-`deadline_text` зберігає оригінальний текстовий фрагмент, якщо дата була знайдена з тексту.
-
-### Program And Funder Fields
-
 - `program_name`
 - `funder_name`
-
-Для EU Funding це може бути framework/programme.
-
-Для Diia Business це може бути category або company/provider.
-
-Для Prostir/GURT ці поля часто відсутні або витягуються з тексту.
-
-### Opportunity Type Fields
-
 - `opportunity_type`
 - `support_type`
-
-`opportunity_type` описує загальний тип можливості.
-
-Приклади:
-
-- `grant`
-- `business_support`
-- `training`
-- `tender`
-
-`support_type` описує конкретніший тип підтримки.
-
-Приклади:
-
-- `grant`
-- `finance_programme`
-- `loan`
-- `guarantee`
-- `leasing`
-- `factoring`
-- `tender_support`
-
-Diia Business може містити не тільки класичні grants, тому `support_type` важливий для відділення grants від інших finance programmes.
-
-### Funding Fields
-
 - `funding_amount_min`
 - `funding_amount_max`
 - `funding_amount_text`
 - `currency`
-
-`funding_amount_text` зберігає людський текст суми.
-
-`funding_amount_min` і `funding_amount_max` заповнюються тільки якщо суму можна достатньо надійно розпарсити.
-
-Cleanup logic не приймає як funding:
-
-- EU reference/topic IDs;
-- роки дедлайнів;
-- Diia KVED/classification values типу `01.2`.
-
-### Geography Fields
-
 - `geography_text`
 - `countries`
 - `regions`
-
-`countries` і `regions` зберігаються як JSON lists.
-
-У matching country mismatch може бути hard filter, якщо grant countries і client country чітко відомі.
-
-### Eligibility And Taxonomy Fields
-
 - `eligibility_text`
 - `applicant_types`
 - `topics`
 - `keywords`
-
-`applicant_types` зберігається як JSON list.
-
-Поточні deterministic applicant type labels:
-
-- `SME`
-- `startup`
-- `company`
-- `NGO`
-- `consortium`
-
-`topics` зберігається як JSON list.
-
-Поточні deterministic topic labels:
-
-- `AI`
-- `defence`
-- `dual-use`
-- `innovation`
-- `community`
-- `business support`
-- `education`
-- `culture`
-- `humanitarian`
-
-`keywords` зараз доповнюються topics і source keywords, якщо вони доступні.
-
-### Restriction And Requirement Fields
-
 - `restrictions_text`
 - `cofinancing_required`
 - `cofinancing_text`
@@ -273,13 +115,6 @@ Cleanup logic не приймає як funding:
 - `consortium_text`
 - `implementation_period_text`
 - `contact_text`
-
-Ці поля можуть бути `NULL`, бо більшість джерел не дає їх як структуровані поля.
-
-Deterministic extraction шукає текстові фрагменти з evidence, а не гарантує повну юридичну інтерпретацію.
-
-### Documents And Metadata
-
 - `documents`
 - `source_metadata`
 - `extraction_method`
@@ -287,119 +122,45 @@ Deterministic extraction шукає текстові фрагменти з evide
 - `extraction_metadata`
 - `needs_manual_review`
 - `manual_review_reason`
-
-`documents` - JSON list документів.
-
-Приклад item:
-
-```json
-{
-  "title": "Guidelines",
-  "url": "https://example.org/file.pdf"
-}
-```
-
-`source_metadata` містить source-specific дані, які не варто робити окремими колонками.
-
-`extraction_metadata` містить технічні деталі extraction:
-
-- `stage`
-- `normalization_version`
-- `source_slug`
-- `fields`
-- `feature_card`
-- `llm`, якщо LLM extraction запускалась
-
-Поточна normalization version:
-
-```text
-stage5-deterministic-v2
-```
-
-`needs_manual_review` ставиться, якщо:
-
-- title виглядає generic;
-- extracted text дуже короткий;
-- не знайдено topics і applicant types;
-- extraction confidence або fields потребують людської перевірки.
-
-### Embedding Fields
-
 - `embedding`
 - `embedding_text`
 - `embedding_model`
 - `embedded_at`
 
-`embedding` має dimension `1536`.
+Required fields:
 
-Ці поля додані Stage 7 і використовуються для vector similarity.
-
-## `NormalizedGrantDraft`
-
-Клас: `grant_tool/ingestion/types.py`
-
-`NormalizedGrantDraft` є проміжним форматом між connector і таблицею `grants`.
-
-Поля `NormalizedGrantDraft` майже напряму відповідають полям `grants`, крім:
-
+- `source_id`
 - `source_url`
 - `title`
 - `status`
-- `source_record_id`
 
-Метод `to_grant_fields()` повертає словник полів, які передаються в `repository.upsert_grant(...)`.
+JSON/list fields:
 
-Поля draft:
-
-- `source_url`
-- `title`
-- `status`
-- `source_record_id`
-- `application_url`
-- `summary`
-- `description_text`
-- `language`
-- `published_at`
-- `opens_at`
-- `deadline_at`
-- `deadline_text`
-- `program_name`
-- `funder_name`
-- `opportunity_type`
-- `support_type`
-- `funding_amount_min`
-- `funding_amount_max`
-- `funding_amount_text`
-- `currency`
-- `geography_text`
 - `countries`
 - `regions`
-- `eligibility_text`
 - `applicant_types`
 - `topics`
 - `keywords`
-- `restrictions_text`
-- `cofinancing_required`
-- `cofinancing_text`
-- `consortium_required`
-- `consortium_text`
-- `implementation_period_text`
-- `contact_text`
 - `documents`
 - `source_metadata`
-- `extraction_method`
-- `extraction_confidence`
 - `extraction_metadata`
-- `needs_manual_review`
-- `manual_review_reason`
 
-## `client_profiles`
+Vector field:
 
-Таблиця: `client_profiles`
+- `embedding`: 1536 dimensions
 
-Призначення: описує клієнта або компанію, для якої шукаються релевантні гранти.
+Constraints/indexes:
 
-Поля:
+- unique: `source_id`, `source_url`
+- unique: `source_id`, `source_record_id`
+- index: `deadline_at`
+- index: `status`
+
+## Client Profiles
+
+Table: `client_profiles`
+
+Fields:
 
 - `id`
 - `created_at`
@@ -424,25 +185,33 @@ stage5-deterministic-v2
 - `embedding_model`
 - `embedded_at`
 
-List-like fields зберігаються як JSON:
+Required fields:
+
+- `name`
+- `slug`
+- `source_type`
+- `enabled`
+
+JSON/list fields:
 
 - `technologies`
 - `target_topics`
 - `excluded_topics`
+- `profile_metadata`
 
-Client profiles імпортуються з:
+Vector field:
 
-```text
-data/manual_seed/client_profiles.manual.csv
-```
+- `embedding`: 1536 dimensions
 
-## `application_history`
+Constraints:
 
-Таблиця: `application_history`
+- unique: `slug`
 
-Призначення: зберігає попередні заявки клієнтів на гранти або програми.
+## Application History
 
-Поля:
+Table: `application_history`
+
+Fields:
 
 - `id`
 - `created_at`
@@ -468,31 +237,33 @@ data/manual_seed/client_profiles.manual.csv
 - `embedding_model`
 - `embedded_at`
 
-Allowed `result` values у seed data:
+Required fields:
 
-- `won`
-- `lost`
-- `rejected`
-- `not_submitted`
-- `unknown`
+- `client_profile_id`
+- `client_name`
+- `grant_title`
+- `result`
+- `similarity_weight`
 
-Попередні заявки є позитивним relevance signal.
+JSON/list fields:
 
-`lost`, `rejected` і `not_submitted` не зменшують fit score.
+- `topics`
+- `history_metadata`
 
-Application history імпортується з:
+Vector field:
 
-```text
-data/manual_seed/application_history.manual.csv
-```
+- `embedding`: 1536 dimensions
 
-## `job_runs`
+Indexes:
 
-Таблиця: `job_runs`
+- `client_profile_id`, `result`
+- `program_name`
 
-Призначення: audit trail для запусків CLI/job operations.
+## Job Runs
 
-Поля:
+Table: `job_runs`
+
+Fields:
 
 - `id`
 - `created_at`
@@ -510,7 +281,7 @@ data/manual_seed/application_history.manual.csv
 - `error_message`
 - `job_metadata`
 
-`job_type` може бути:
+Enum values for `job_type`:
 
 - `ingestion`
 - `import_clients`
@@ -519,9 +290,10 @@ data/manual_seed/application_history.manual.csv
 - `matching`
 - `llm_extraction`
 - `embedding`
+- `report`
 - `seed_sources`
 
-`status` може бути:
+Enum values for `status`:
 
 - `pending`
 - `running`
@@ -529,13 +301,20 @@ data/manual_seed/application_history.manual.csv
 - `failed`
 - `partial`
 
-## `match_runs`
+JSON fields:
 
-Таблиця: `match_runs`
+- `job_metadata`
 
-Призначення: один запуск matching.
+Indexes:
 
-Поля:
+- `job_type`, `status`
+- `started_at`
+
+## Match Runs
+
+Table: `match_runs`
+
+Fields:
 
 - `id`
 - `created_at`
@@ -548,22 +327,26 @@ data/manual_seed/application_history.manual.csv
 - `completed_at`
 - `notes`
 
-`parameters` зберігає:
+Required fields:
 
-- `client_slug`
-- `grant_limit`
-- `top_n`
-- `min_score`
-- `use_vector`
-- `matching_version`
+- `run_type`
+- `status`
+- `parameters`
+- `started_at`
 
-## `grant_client_matches`
+JSON fields:
 
-Таблиця: `grant_client_matches`
+- `parameters`
 
-Призначення: конкретний match між grant і client profile.
+Indexes:
 
-Поля:
+- `status`
+
+## Grant Client Matches
+
+Table: `grant_client_matches`
+
+Fields:
 
 - `id`
 - `created_at`
@@ -585,104 +368,155 @@ data/manual_seed/application_history.manual.csv
 - `evidence`
 - `match_metadata`
 
-`score` - final score після Stage 6/7 logic.
+Required fields:
 
-`keyword_score` - deterministic keyword/topic/client fit score.
+- `match_run_id`
+- `grant_id`
+- `client_profile_id`
+- `score`
+- `hard_filter_passed`
 
-`vector_score` - semantic similarity score, якщо embeddings існують і `--use-vector` увімкнений.
+JSON/list fields:
 
-`history_score` - boost зі схожої application history.
+- `filter_reasons`
+- `manual_checks`
+- `evidence`
+- `match_metadata`
 
-`llm_score` - confidence/quality score для explanation, не заміна final `score`.
+Constraints/indexes:
 
-`evidence` містить:
+- unique: `match_run_id`, `grant_id`, `client_profile_id`
+- index: `score`
 
-- keyword evidence;
-- vector evidence;
-- history evidence;
-- hard filter reasons;
-- manual checks.
+## Reports
 
-`match_metadata.score_breakdown` містить:
+Table: `reports`
 
-- `keyword_score`
-- `vector_score`
-- `history_score`
-- `stage6_fallback_score`
-- `final_score`
+Fields:
 
-## Поля, Які Не Треба Робити Окремими Колонками
+- `id`
+- `created_at`
+- `updated_at`
+- `match_run_id`
+- `title`
+- `report_type`
+- `format`
+- `summary`
+- `content`
+- `generated_at`
+- `report_metadata`
 
-Ці дані краще залишати в JSON або зберігати на рівні matching:
-
-- source-specific categories;
-- exact EU internal metadata IDs;
-- all related links as separate columns;
-- all document links as separate columns;
-- parser debug details;
-- LLM raw response;
-- field-level confidence columns для кожного окремого поля;
-- match risks на рівні `grants`.
-
-Куди їх класти:
-
-- source-specific дані -> `source_metadata`;
-- raw API/HTML -> `raw_grant_snapshots`;
-- extraction details -> `extraction_metadata`;
-- documents -> `documents`;
-- matching risks -> `grant_client_matches.risks_text`;
-- explanation details -> `grant_client_matches.match_metadata`.
-
-## Поля, Які Важливі Для Matching
-
-Найважливіші grant fields:
+Required fields:
 
 - `title`
+- `report_type`
+- `format`
+- `content`
+- `generated_at`
+
+JSON fields:
+
+- `report_metadata`
+
+## NormalizedGrantDraft
+
+Python dataclass: `NormalizedGrantDraft`
+
+Fields:
+
+- `source_url`
+- `title`
+- `status`
+- `source_record_id`
+- `application_url`
 - `summary`
 - `description_text`
-- `status`
+- `language`
+- `published_at`
+- `opens_at`
 - `deadline_at`
 - `deadline_text`
-- `countries`
-- `geography_text`
-- `eligibility_text`
-- `applicant_types`
-- `topics`
-- `keywords`
-- `funding_amount_text`
-- `restrictions_text`
-- `cofinancing_text`
-- `consortium_text`
 - `program_name`
 - `funder_name`
 - `opportunity_type`
 - `support_type`
-- `source_url`
-
-Найважливіші client fields:
-
-- `country`
-- `sector`
-- `organization_type`
-- `technologies`
-- `target_topics`
-- `excluded_topics`
-- `product_description`
-- `risks`
-
-Найважливіші history fields:
-
-- `grant_title`
-- `grant_source`
-- `program_name`
-- `result`
-- `country`
-- `applicant_type`
+- `funding_amount_min`
+- `funding_amount_max`
+- `funding_amount_text`
+- `currency`
+- `geography_text`
+- `countries`
+- `regions`
+- `eligibility_text`
+- `applicant_types`
 - `topics`
-- `project_summary`
-- `reusable_materials`
-- `similarity_weight`
+- `keywords`
+- `restrictions_text`
+- `cofinancing_required`
+- `cofinancing_text`
+- `consortium_required`
+- `consortium_text`
+- `implementation_period_text`
+- `contact_text`
+- `documents`
+- `source_metadata`
+- `extraction_method`
+- `extraction_confidence`
+- `extraction_metadata`
+- `needs_manual_review`
+- `manual_review_reason`
 
-Matching має працювати навіть якщо частина grant fields відсутня.
+## FetchedGrant
 
-Відсутні або нечіткі fields створюють `manual_checks`, а не обов'язково ламають match.
+Python dataclass: `FetchedGrant`
+
+Fields:
+
+- `normalized`
+- `raw_payload`
+- `raw_html`
+- `raw_text`
+- `raw_title`
+- `raw_summary`
+- `http_status`
+- `content_type`
+- `snapshot_metadata`
+
+## FetchedDetail
+
+Python dataclass: `FetchedDetail`
+
+Fields:
+
+- `source_url`
+- `raw_payload`
+- `raw_html`
+- `raw_text`
+- `http_status`
+- `content_type`
+- `metadata`
+
+## ConnectorError
+
+Python dataclass: `ConnectorError`
+
+Fields:
+
+- `message`
+- `source_url`
+- `stage`
+- `metadata`
+
+## ConnectorResult
+
+Python dataclass: `ConnectorResult`
+
+Fields:
+
+- `source_slug`
+- `grants`
+- `errors`
+
+Properties:
+
+- `fetched_count`
