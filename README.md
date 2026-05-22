@@ -13,13 +13,7 @@ The first MVP focuses on these grant sources:
 - GURT grants
 - Diia Business finance programs
 
-The MVP uses local structured files for client data:
-
-- `CSV` client profiles
-- separate `CSV` application history
-
-Implemented stages mind map: [`docs/implemented_stages_mindmap.svg`](docs/implemented_stages_mindmap.svg).
-Grant fields and extraction map: [`docs/grant_fields_extraction_map.uk.svg`](docs/grant_fields_extraction_map.uk.svg).
+Grant fields and extraction map: [`docs/plan.svg`](docs/grant_fields_extraction_map.uk.svg).
 
 ## Local Start
 
@@ -50,26 +44,6 @@ After startup, the dashboard is available at:
 - `http://localhost:8000/clients`
 - `http://localhost:8000/matches`
 - `http://localhost:8000/report`
-
-## Ingestion
-
-Stage 3 ingestion and Stage 5 feature extraction are available through the CLI:
-
-```bash
-docker compose exec app grant-tool ingest --all --limit 20
-```
-
-This collects up to 20 grants per MVP source, stores raw snapshots, runs deterministic feature extraction, upserts normalized grants, and records a `JobRun`.
-
-To re-run Stage 5 extraction for already stored grants:
-
-```bash
-docker compose exec app grant-tool extract-features --limit 100
-```
-
-`--use-llm` is optional and only runs when `OPENAI_API_KEY` is configured. Without it, extraction stays deterministic and uses only source data already fetched from the real websites.
-
-## Core Logic
 
 The system follows this flow:
 
