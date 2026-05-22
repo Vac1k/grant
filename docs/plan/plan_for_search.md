@@ -22,7 +22,7 @@
 3. Зробити уніфікований підхід для діставання даних з кожного сайту.
 4. Створити standardized initial table для збереження результатів пошуку перед raw details.
 5. Покращити роль `raw_grant_snapshots`, не змішуючи raw audit data з бізнес-нормалізацією.
-6. Зробити початкову логіку витягання всіх активних грантів або всіх релевантних грантів, якщо active-only ненадійний.
+6. Зробити початкову логіку витягання всіх релевантних grant-like opportunities без обов'язкового active-only фільтра на рівні search.
 7. Після початкового наповнення БД витягати тільки нові гранти, які з'явились, а не додавати повторно ті самі гранти.
 
 ## Коли Великий Stage Search Може Бути Завершений
@@ -102,7 +102,7 @@ detail_strategy:
 pagination_strategy:
 stable_id_strategy:
 incremental_key:
-active_only_possible:
+status_hint_possible:
 data_quality:
 noise_level:
 implementation_complexity:
@@ -122,7 +122,7 @@ recommendation:
 - чи є stable ID;
 - чи є pagination;
 - чи можна обмежити тільки гранти;
-- чи можна визначити active/closed на list рівні;
+- чи можна отримати status/deadline hint на list рівні без фільтрації результатів;
 - чи detail page має дедлайн, умови, funder, amount, geography, documents;
 - чи сайт не потребує login або paid subscription.
 
@@ -171,17 +171,19 @@ Deliverable цього step:
 Основне правило:
 
 ```text
-якщо active-only надійний -> збираємо active grants
-якщо active-only ненадійний -> збираємо всі релевантні grant-like opportunities
+збираємо всі релевантні grant-like opportunities
+не відкидаємо item тільки через те, що active/closed status не зрозумілий на list рівні
+active/closed визначаємо пізніше через detail extraction і normalized grant fields
 ```
 
-Чому не завжди active-only:
+Чому не використовуємо active-only як початковий search filter:
 
 - не всі сайти показують статус у list;
 - deadline часто є тільки на detail page;
 - деякі гранти мають rolling deadline;
 - деякі сайти не мають structured date;
-- aggressive active-only filter може пропустити корисні гранти.
+- aggressive active-only filter може пропустити корисні гранти;
+- search stage має знаходити релевантні можливості, а не приймати фінальне рішення про статус.
 
 Для кожного джерела треба визначити:
 
@@ -190,14 +192,15 @@ Deliverable цього step:
 - category/tag filters;
 - date filters;
 - country/topic filters;
-- whether old/closed grants should be stored;
+- як обмежити нерелевантний шум без active-only фільтра;
 - max requests per run;
 - rate limit.
 
 Deliverable цього step:
 
 - backfill rule для кожного джерела;
-- active/all decision для кожного джерела;
+- rule для збору релевантних grant-like opportunities;
+- rule для status/deadline hints, якщо сайт їх дає;
 - safe request limits;
 - documented reason for the chosen strategy.
 
@@ -570,19 +573,19 @@ Deliverable цього step:
 - documented incremental key;
 - documented duplicate risk.
 
-## Step 7: Періодичне Оновлення Відомих Active Grants
+## Step 7: Періодичне Оновлення Відомих Open Grants Після Extraction
 
 Поточний `incremental` пропускає detail-fetch для known item. Це добре для нових грантів, але не бачить зміну дедлайну або умов на вже відомій сторінці.
 
 Потрібне наступне покращення:
 
 ```text
-refresh known active items every N days
+refresh known open items every N days after status was determined by extraction
 ```
 
 Попереднє правило:
 
-- active grants оновлювати кожні 7 днів;
+- grants зі статусом `open` після extraction оновлювати кожні 7 днів;
 - grants без deadline оновлювати кожні 14 днів;
 - closed grants не оновлювати або оновлювати рідко;
 - critical sources можуть мати коротший refresh interval.
@@ -644,7 +647,7 @@ Deliverable цього step:
 - всі connectors перевірені на реальних сайтах;
 - initial backfill працює;
 - incremental new-only collection працює;
-- refresh policy для known active grants визначена або реалізована;
+- refresh policy для known open grants після extraction визначена або реалізована;
 - documentation відповідає фактичній реалізації.
 
 ## Підсумок

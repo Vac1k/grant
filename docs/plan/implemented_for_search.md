@@ -282,7 +282,7 @@ OK
 - реалізація нових source-specific connectors;
 - хвилі реалізації по 4 джерела;
 - real website validation для всіх джерел;
-- логіка active-only або broad collection для кожного нового сайту;
-- регулярне оновлення відомих active grant details;
+- логіка broad collection для релевантних grant-like opportunities без active-only search filter;
+- регулярне оновлення відомих open grant details після extraction;
 - discovery dashboard або CLI report;
 - фінальне закриття Stage Search.
