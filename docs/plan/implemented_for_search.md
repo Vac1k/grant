@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел. Stage Search ще не завершений, бо попереду залишаються фінальна real website validation матриця, підтвердження incremental behavior для всіх джерел, refresh policy для відомих open grants і операційна видимість search.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, а також закрито Step 5 real website validation. Stage Search ще не завершений, бо попереду залишаються підтвердження incremental behavior для всіх джерел, refresh policy для відомих open grants і операційна видимість search.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -1170,11 +1170,113 @@ alembic heads -> 20260522_0004 (head)
 git diff --check -> OK
 ```
 
+## Реалізовано: Step 5 - Real Website Validation
+
+Статус: виконано.
+
+Дата перевірки: `2026-05-23`.
+
+Мета Step 5 була підтвердити, що connectors працюють не тільки на fixtures, а й на реальних сайтах, і що результат може пройти ingestion flow до `discovered_grant_items`, `raw_grant_snapshots` і `grants`.
+
+### Метод Перевірки
+
+Було виконано два рівні перевірки:
+
+1. Connector-level validation:
+
+```text
+Connector.run(limit=1)
+  -> discover()
+  -> fetch_detail()
+  -> normalize()
+```
+
+2. Ingestion-level validation на in-memory DB:
+
+```text
+seed-sources
+  -> IngestionService.run_source(source, limit=1, mode=backfill)
+  -> discovered_grant_items
+  -> raw_grant_snapshots
+  -> grants
+  -> job counters
+```
+
+`new_count` і `known_count` у цьому step не є фінальним incremental доказом, бо перевірка запускалась у clean in-memory DB. Повна перевірка known/new behavior залишається в Step 6.
+
+### Live Connector Validation Matrix
+
+| Source slug | Access strategy | Discovered / normalized | Errors | Sample status | Sample title | Decision |
+|---|---|---:|---:|---|---|---|
+| `eu-funding` | `api` | 1 | 0 | `310945031` | Support to the Ministry of Public Administration and Local Self-Government in modernizing the personnel planning procedure | `ready_with_limitations` |
+| `prostir` | `rss` | 1 | 0 | `open` | Триває прийом заявок на участь у проєкті U-TEX для організацій підтримки бізнесу | `ready` |
+| `diia-business` | `api` | 1 | 0 | `open` | Програма розвитку МСП Сумської області на 2022-2026 роки | `ready_with_limitations` |
+| `gurt` | `html` | 0 | 1 | n/a | n/a | `not_publicly_accessible` |
+| `chas-zmin` | `wp_rest` | 1 | 0 | `open` | ДО 8 000 ЄВРО - ГРАНТОВА ПРОГРАМА ДЛЯ МІКРОПІДПРИЄМЦІВ ІЗ ПРИФРОНТОВИХ РЕГІОНІВ (НУР) | `ready` |
+| `eufundingportal-eu` | `wp_rest` | 1 | 0 | `unknown` | Call for applications to provide access to Advisory Services that enable beneficiaries to prepare green/greener investment projects | `ready_with_limitations` |
+| `hromady` | `wp_rest` | 1 | 0 | `open` | Добірка конкурсів та грантових можливостей | `ready_with_limitations` |
+| `nipo` | `wp_rest` | 1 | 0 | `unknown` | SME Fund 2026 для українського бізнесу: підсумки вебінару Talking about my idea | `ready_with_limitations` |
+| `grant-market` | `sitemap_html` | 1 | 0 | `unknown` | Грант на покриття 85% вартості консалтингових проєктів для МСБ | `ready` |
+| `fundsforngos` | `wp_rest` | 1 | 0 | `unknown` | CFAs: Artistic Creation Grant for Artists and Arts Organizations (Canada) | `ready_with_limitations` |
+| `opportunitydesk` | `wp_rest` | 1 | 0 | `closed` | UNESCO MAB Young Scientists Awards 2026 (up to $5,000) | `ready_with_limitations` |
+
+### Ingestion-Level Validation Matrix
+
+| Source slug | Job status | Processed | Created | Updated | Skipped | Failed | Errors | Decision |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| `eu-funding` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `prostir` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready` |
+| `diia-business` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `gurt` | `partial` | 0 | 0 | 0 | 0 | 0 | 1 | `not_publicly_accessible` |
+| `chas-zmin` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready` |
+| `eufundingportal-eu` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `hromady` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `nipo` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `grant-market` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready` |
+| `fundsforngos` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+| `opportunitydesk` | `success` | 1 | 1 | 0 | 0 | 0 | 0 | `ready_with_limitations` |
+
+### Deferred / Restricted Source Evidence
+
+| Source slug | Tested URL | Evidence | Decision |
+|---|---|---|---|
+| `grantsense` | `https://www.grantsense.com.ua/grants2025` | `500 text/html`; page does not provide stable server-rendered direct opportunity feed. | `deferred` |
+| `grantsense` | `https://www.grantsense.com.ua/sitemap.xml` | `200 application/xml`; sitemap exists, but points mostly to service/category/blog pages rather than a reliable direct opportunity feed. | `deferred` |
+| `grantsense` | `https://www.grantsense.com.ua/wp-json/` | `404 text/html`; no useful WP REST endpoint. | `deferred` |
+| `grantforward` | `https://www.grantforward.com/search` | `200 text/html`; search UI exists, but static HTML has no direct grant result links without JS/search flow. | `deferred_restricted` |
+| `grantforward` | `https://www.grantforward.com/wp-json/wp/v2/posts?per_page=1&search=grant` | `404 text/html`; no WP REST posts endpoint. | `deferred_restricted` |
+| `grantforward` | `https://www.grantforward.com/sitemap.xml` | `404 text/html`; no public sitemap for direct discovery. | `deferred_restricted` |
+
+### Known Limitations Before Production Use
+
+| Source slug | Limitation | Required follow-up |
+|---|---|---|
+| `eu-funding` | Live API returned raw status-like value `310945031` as normalized status. | Normalize EU status codes/labels in a later fix or Step 9 cleanup. |
+| `diia-business` | Source includes broader business finance/support programmes, not only pure grants. | Keep `support_type` and manual review/feature extraction checks. |
+| `gurt` | Cloudflare/human-check returns `403 Forbidden`. | Use only if official/public access path appears; no bypass. |
+| `eufundingportal-eu` | Aggregator source can duplicate official EU Funding opportunities. | Keep duplicate risk metadata and manual review. |
+| `hromady` | Sample can be digest/list content, not always direct grant detail. | Treat as ready with limitations; Step 6/7 can refine filtering or refresh policy. |
+| `nipo` | News/digest source; sample can be webinar/digest content. | Keep `needs_manual_review`. |
+| `fundsforngos` | Broad international source with country/topic mismatch risk. | Keep `needs_manual_review` and strong filters. |
+| `opportunitydesk` | Broad opportunity source; sampled item was already `closed`, which is allowed because search does not use active-only filter. | Keep digest filter and manual review. |
+| `grantsense` | No stable direct opportunity feed confirmed. | Stay deferred. |
+| `grantforward` | Restricted/dynamic search product with login/subscription mechanics. | Stay deferred/restricted. |
+
+### Acceptance Step 5
+
+Step 5 закритий, бо:
+
+- усі configured connectors перевірені на реальних сайтах через connector-level validation;
+- 10 із 11 configured connectors пройшли ingestion-level validation із `success`, `processed=1`, `created=1`;
+- `gurt` отримав documented live failure `403 Forbidden` і рішення `not_publicly_accessible`;
+- `grantsense` і `grantforward` мають documented deferred/restricted evidence;
+- для кожного джерела зафіксовано decision;
+- список production limitations зафіксовано перед наступними steps.
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- фінальна real website validation матриця для всіх джерел;
 - підтвердження incremental behavior для всіх джерел;
 - регулярне оновлення відомих open grant details після extraction;
 - discovery dashboard або CLI report;
