@@ -51,6 +51,7 @@ class WordPressGrantConnector(BaseConnector):
     default_quality_reasons: ClassVar[tuple[str, ...]] = ()
     requires_manual_review_by_default: ClassVar[bool] = False
     manual_review_reason: ClassVar[str | None] = None
+    discovery_page_multiplier: ClassVar[int] = 1
 
     def discover(self, *, limit: int, mode: DiscoveryMode) -> list[DiscoveredGrantItemDraft]:
         api_url = self._posts_api_url()
@@ -63,16 +64,20 @@ class WordPressGrantConnector(BaseConnector):
         for search_term in self._search_terms():
             if len(discovered) >= limit:
                 break
-            per_page = min(max(limit, 1), 50)
+            per_page = min(max(limit * self.discovery_page_multiplier, 1), 50)
             try:
+                params = {
+                    "per_page": per_page,
+                    "search": search_term,
+                    "orderby": "date",
+                    "order": "desc",
+                }
+                categories = self._category_ids()
+                if categories:
+                    params["categories"] = ",".join(str(category_id) for category_id in categories)
                 response = self.http.get(
                     api_url,
-                    params={
-                        "per_page": per_page,
-                        "search": search_term,
-                        "orderby": "date",
-                        "order": "desc",
-                    },
+                    params=params,
                 )
                 last_response_status = response.status_code
                 last_content_type = response.content_type
@@ -163,7 +168,7 @@ class WordPressGrantConnector(BaseConnector):
         html = detail.raw_html or ""
         text = detail.raw_text or soup_text(html) or item.summary_hint or item.title_hint or ""
         deadline_at, deadline_text = extract_deadline(text)
-        title = self._title_from_detail_html(html) or item.title_hint or "Untitled grant opportunity"
+        title = item.title_hint or self._title_from_detail_html(html) or "Untitled grant opportunity"
         funding_amount_text = extract_funding_text(text)
         documents = extract_documents(item.source_url, html) if html else []
         return NormalizedGrantDraft(
@@ -203,6 +208,18 @@ class WordPressGrantConnector(BaseConnector):
             terms = tuple(clean_text(str(term)) for term in metadata_terms)
             return tuple(term for term in terms if term)
         return self.search_terms
+
+    def _category_ids(self) -> tuple[int, ...]:
+        metadata_categories = self.source.source_metadata.get("wp_categories") if self.source.source_metadata else None
+        if not isinstance(metadata_categories, list):
+            return ()
+        category_ids: list[int] = []
+        for value in metadata_categories:
+            try:
+                category_ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return tuple(category_ids)
 
     def _discover_rss(
         self,
@@ -375,3 +392,55 @@ class HromadyConnector(WordPressGrantConnector):
     language = "uk"
     default_quality_level = "medium"
     default_quality_reasons = ("local_development_source",)
+
+
+class NipoConnector(WordPressGrantConnector):
+    source_slug = "nipo"
+    search_terms = ("грант", "конкурс", "можливості", "підтримка")
+    language = "uk"
+    default_quality_level = "medium"
+    default_quality_reasons = ("digest_or_news_source",)
+    requires_manual_review_by_default = True
+    manual_review_reason = "NIPO can include digest/news posts, not only direct grant competitions."
+
+
+class FundsForNgosConnector(WordPressGrantConnector):
+    source_slug = "fundsforngos"
+    search_terms = ("grant", "funding", "call for proposals")
+    grant_keywords = WordPressGrantConnector.grant_keywords + ("proposal", "proposals", "ngo", "ngos")
+    language = "en"
+    default_quality_level = "medium"
+    default_quality_reasons = ("broad_international_source", "country_topic_filter_required")
+    requires_manual_review_by_default = True
+    manual_review_reason = "Broad international source can include noisy or country-mismatched opportunities."
+
+
+class OpportunityDeskConnector(WordPressGrantConnector):
+    source_slug = "opportunitydesk"
+    search_terms = ("grant", "funding", "call for proposals")
+    grant_keywords = WordPressGrantConnector.grant_keywords + ("proposal", "proposals", "award", "awards")
+    language = "en"
+    default_quality_level = "medium"
+    default_quality_reasons = ("broad_opportunity_source", "awards_and_grants_category_filter")
+    requires_manual_review_by_default = True
+    manual_review_reason = "Broad opportunity source can include awards, contests, fellowships or region-mismatched grants."
+    discovery_page_multiplier = 10
+
+    def _is_grant_like(self, post: dict[str, Any]) -> bool:
+        if not super()._is_grant_like(post):
+            return False
+        title = self._rendered_text(post.get("title")) or ""
+        return not self._is_digest_title(title)
+
+    @staticmethod
+    def _is_digest_title(title: str) -> bool:
+        lowered = title.lower()
+        digest_markers = (
+            "opportunities currently open",
+            "opportunities closing",
+            "closing in",
+            "opportunities you",
+        )
+        if any(marker in lowered for marker in digest_markers):
+            return True
+        return bool(re.search(r"\b\d{2,}\s+(grants|opportunities|scholarships)", lowered))

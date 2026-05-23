@@ -196,13 +196,13 @@ class RepositoryTestCase(unittest.TestCase):
 
         source_count = self.session.scalar(select(func.count(Source.id)))
 
-        self.assertEqual(source_count, 7)
-        self.assertEqual(len(first_sources), 7)
-        self.assertEqual(len(second_sources), 7)
-        self.assertEqual(first_job.created_count, 7)
+        self.assertEqual(source_count, 11)
+        self.assertEqual(len(first_sources), 11)
+        self.assertEqual(len(second_sources), 11)
+        self.assertEqual(first_job.created_count, 11)
         self.assertEqual(first_job.updated_count, 0)
         self.assertEqual(second_job.created_count, 0)
-        self.assertEqual(second_job.updated_count, 7)
+        self.assertEqual(second_job.updated_count, 11)
         self.assertEqual(first_job.status, JobStatus.SUCCESS.value)
         self.assertEqual(second_job.status, JobStatus.SUCCESS.value)
         self.assertIsNotNone(self.repository.get_source_by_slug("eu-funding"))
@@ -210,6 +210,10 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertEqual(self.repository.get_source_by_slug("chas-zmin").access_strategy, "wp_rest")
         self.assertEqual(self.repository.get_source_by_slug("eufundingportal-eu").access_strategy, "wp_rest")
         self.assertEqual(self.repository.get_source_by_slug("hromady").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("nipo").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("grant-market").access_strategy, "sitemap_html")
+        self.assertEqual(self.repository.get_source_by_slug("fundsforngos").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("opportunitydesk").access_strategy, "wp_rest")
 
 
 if __name__ == "__main__":

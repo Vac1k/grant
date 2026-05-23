@@ -17,8 +17,12 @@ from grant_tool.ingestion.connectors import (
     DiiaBusinessConnector,
     EUFundingPortalEuConnector,
     EUFundingConnector,
+    FundsForNgosConnector,
+    GrantMarketConnector,
     GurtConnector,
     HromadyConnector,
+    NipoConnector,
+    OpportunityDeskConnector,
     ProstirConnector,
 )
 from grant_tool.ingestion.http import HttpResponse
@@ -321,10 +325,124 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(grant.language, "uk")
         self.assertEqual(grant.opportunity_type, "grant")
 
-    def test_connector_registry_includes_wave1_sources(self) -> None:
+    def test_nipo_connector_marks_digest_review(self) -> None:
+        api_url = "https://nipo.gov.ua/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="nipo",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://nipo.gov.ua",
+            api_url=api_url,
+            feed_url="https://nipo.gov.ua/feed/",
+        )
+        connector = NipoConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "nipo/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "404")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "uk")
+        self.assertEqual(grant.funding_amount_text, "500 000 грн")
+        self.assertTrue(grant.documents)
+        self.assertTrue(grant.needs_manual_review)
+        self.assertIn("digest/news", grant.manual_review_reason)
+
+    def test_grant_market_connector_parses_sitemap_and_detail(self) -> None:
+        sitemap_url = "https://grant.market/sitemap.xml"
+        detail_url = "https://grant.market/opp/ebrd-consulting"
+        source = self.source(
+            slug="grant-market",
+            access_strategy=AccessStrategy.SITEMAP_HTML,
+            base_url="https://grant.market",
+            sitemap_url=sitemap_url,
+        )
+        connector = GrantMarketConnector(
+            source=source,
+            http_client=FakeHttpClient(
+                {
+                    sitemap_url: html_response(sitemap_url, "grant_market/sitemap.xml", "application/xml"),
+                    detail_url: html_response(detail_url, "grant_market/detail.html"),
+                }
+            ),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, detail_url)
+        self.assertEqual(grant.title, "Грант на консалтингові послуги")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "uk")
+        self.assertTrue(grant.documents)
+
+    def test_fundsforngos_connector_marks_broad_source_review(self) -> None:
+        api_url = "https://www2.fundsforngos.org/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="fundsforngos",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://www2.fundsforngos.org",
+            api_url=api_url,
+            feed_url="https://www2.fundsforngos.org/feed/",
+        )
+        connector = FundsForNgosConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "fundsforngos/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "505")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "en")
+        self.assertIn("USD 25,000", grant.funding_amount_text or "")
+        self.assertTrue(grant.needs_manual_review)
+        self.assertIn("Broad international", grant.manual_review_reason)
+
+    def test_opportunitydesk_connector_marks_broad_source_review(self) -> None:
+        api_url = "https://www.opportunitydesk.org/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="opportunitydesk",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://www.opportunitydesk.org",
+            api_url=api_url,
+            feed_url="https://www.opportunitydesk.org/feed/",
+        )
+        connector = OpportunityDeskConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "opportunitydesk/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "606")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "en")
+        self.assertIn("EUR 50,000", grant.funding_amount_text or "")
+        self.assertTrue(grant.documents)
+        self.assertTrue(grant.needs_manual_review)
+        self.assertIn("Broad opportunity", grant.manual_review_reason)
+
+    def test_connector_registry_includes_wave_sources(self) -> None:
         self.assertIs(CONNECTOR_CLASSES["chas-zmin"], ChasZminConnector)
         self.assertIs(CONNECTOR_CLASSES["eufundingportal-eu"], EUFundingPortalEuConnector)
         self.assertIs(CONNECTOR_CLASSES["hromady"], HromadyConnector)
+        self.assertIs(CONNECTOR_CLASSES["nipo"], NipoConnector)
+        self.assertIs(CONNECTOR_CLASSES["grant-market"], GrantMarketConnector)
+        self.assertIs(CONNECTOR_CLASSES["fundsforngos"], FundsForNgosConnector)
+        self.assertIs(CONNECTOR_CLASSES["opportunitydesk"], OpportunityDeskConnector)
 
     def test_ingestion_service_saves_snapshots_grants_and_job(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"
@@ -378,6 +496,36 @@ class Stage3IngestionTestCase(unittest.TestCase):
         )
 
         summary = service.run_source("chas-zmin", limit=20)
+        grant_count = self.session.scalar(select(func.count(Grant.id)))
+        discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
+
+        self.assertEqual(summary.status, JobStatus.SUCCESS.value)
+        self.assertEqual(summary.created_count, 1)
+        self.assertEqual(grant_count, 1)
+        self.assertEqual(discovered_count, 1)
+
+    def test_ingestion_service_saves_wave2_sitemap_source(self) -> None:
+        sitemap_url = "https://grant.market/sitemap.xml"
+        detail_url = "https://grant.market/opp/ebrd-consulting"
+        self.source(
+            slug="grant-market",
+            access_strategy=AccessStrategy.SITEMAP_HTML,
+            base_url="https://grant.market",
+            sitemap_url=sitemap_url,
+        )
+        fake_http = FakeHttpClient(
+            {
+                sitemap_url: html_response(sitemap_url, "grant_market/sitemap.xml", "application/xml"),
+                detail_url: html_response(detail_url, "grant_market/detail.html"),
+            }
+        )
+        service = IngestionService(
+            repository=self.repository,
+            connector_classes={"grant-market": CONNECTOR_CLASSES["grant-market"]},
+            http_client_factory=lambda _rate_limit: fake_http,
+        )
+
+        summary = service.run_source("grant-market", limit=20)
         grant_count = self.session.scalar(select(func.count(Grant.id)))
         discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
 

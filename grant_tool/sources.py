@@ -122,7 +122,83 @@ WAVE1_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
     },
 )
 
-SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = MVP_SOURCE_DEFINITIONS + WAVE1_SOURCE_DEFINITIONS
+WAVE2_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "slug": "nipo",
+        "name": "NIPO grant-related posts",
+        "base_url": "https://nipo.gov.ua",
+        "api_url": "https://nipo.gov.ua/wp-json/wp/v2/posts",
+        "feed_url": "https://nipo.gov.ua/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search for grant-related posts; mark results for review because the site can include news/digest content.",
+        "source_metadata": {
+            "priority": 8,
+            "wave": "4.2",
+            "country_focus": ["Ukraine"],
+            "wp_search_terms": ["грант", "конкурс", "можливості", "підтримка"],
+            "digest_or_news_source": True,
+        },
+    },
+    {
+        "slug": "grant-market",
+        "name": "Grant Market opportunities",
+        "base_url": "https://grant.market",
+        "list_url": "https://grant.market/",
+        "sitemap_url": "https://grant.market/sitemap.xml",
+        "access_strategy": AccessStrategy.SITEMAP_HTML,
+        "rate_limit_seconds": 5,
+        "notes": "Use sitemap discovery filtered to /opp/ URLs and HTML detail parsing.",
+        "source_metadata": {
+            "priority": 9,
+            "wave": "4.2",
+            "country_focus": ["Ukraine"],
+            "sitemap_path_filter": "/opp/",
+        },
+    },
+    {
+        "slug": "fundsforngos",
+        "name": "fundsforNGOs grant posts",
+        "base_url": "https://www2.fundsforngos.org",
+        "api_url": "https://www2.fundsforngos.org/wp-json/wp/v2/posts",
+        "feed_url": "https://www2.fundsforngos.org/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search with grant/funding terms; mark results for review because the source is broad and international.",
+        "source_metadata": {
+            "priority": 10,
+            "wave": "4.2",
+            "region_focus": ["Global", "Europe", "Ukraine"],
+            "wp_search_terms": ["grant", "funding", "call for proposals"],
+            "broad_international_source": True,
+        },
+    },
+)
+
+WAVE3_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "slug": "opportunitydesk",
+        "name": "Opportunity Desk grant posts",
+        "base_url": "https://www.opportunitydesk.org",
+        "api_url": "https://www.opportunitydesk.org/wp-json/wp/v2/posts",
+        "feed_url": "https://www.opportunitydesk.org/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search with the Awards and Grants category filter; mark results for review because the source is broad.",
+        "source_metadata": {
+            "priority": 11,
+            "wave": "4.3",
+            "region_focus": ["Global", "Europe", "Ukraine"],
+            "wp_search_terms": ["grant", "funding", "call for proposals"],
+            "wp_categories": [29],
+            "broad_opportunity_source": True,
+        },
+    },
+)
+
+SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    MVP_SOURCE_DEFINITIONS + WAVE1_SOURCE_DEFINITIONS + WAVE2_SOURCE_DEFINITIONS + WAVE3_SOURCE_DEFINITIONS
+)
 
 
 def seed_mvp_sources(repository: GrantRepository) -> tuple[JobRun, list[Source]]:

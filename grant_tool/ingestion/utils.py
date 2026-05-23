@@ -47,6 +47,41 @@ _UK_DATE_RE = re.compile(
     + r")\s+(20\d{2})\b",
     re.IGNORECASE,
 )
+_EN_MONTHS = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sep": 9,
+    "sept": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+_EN_MONTH_PATTERN = "|".join(sorted(_EN_MONTHS, key=len, reverse=True))
+_EN_DATE_MONTH_FIRST_RE = re.compile(
+    rf"\b({_EN_MONTH_PATTERN})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?[,]?\s+(20\d{{2}})\b",
+    re.IGNORECASE,
+)
+_EN_DATE_DAY_FIRST_RE = re.compile(
+    rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({_EN_MONTH_PATTERN})\.?[,]?\s+(20\d{{2}})\b",
+    re.IGNORECASE,
+)
 
 
 def clean_text(value: str | None) -> str | None:
@@ -143,6 +178,24 @@ def parse_datetime(value: str | None) -> datetime | None:
         day = int(uk_match.group(1))
         month = _UK_MONTHS[uk_match.group(2).lower()]
         year = int(uk_match.group(3))
+        try:
+            return datetime(year, month, day, tzinfo=UTC)
+        except ValueError:
+            pass
+    en_month_first_match = _EN_DATE_MONTH_FIRST_RE.search(text.lower())
+    if en_month_first_match:
+        month = _EN_MONTHS[en_month_first_match.group(1).lower()]
+        day = int(en_month_first_match.group(2))
+        year = int(en_month_first_match.group(3))
+        try:
+            return datetime(year, month, day, tzinfo=UTC)
+        except ValueError:
+            pass
+    en_day_first_match = _EN_DATE_DAY_FIRST_RE.search(text.lower())
+    if en_day_first_match:
+        day = int(en_day_first_match.group(1))
+        month = _EN_MONTHS[en_day_first_match.group(2).lower()]
+        year = int(en_day_first_match.group(3))
         try:
             return datetime(year, month, day, tzinfo=UTC)
         except ValueError:

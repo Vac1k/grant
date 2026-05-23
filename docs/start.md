@@ -104,6 +104,10 @@ docker compose exec app grant-tool ingest --source gurt --limit 20 --mode increm
 docker compose exec app grant-tool ingest --source chas-zmin --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source eufundingportal-eu --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source hromady --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source nipo --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode incremental
 ```
 
 `incremental` перечитує listing/RSS/API/search endpoint, але пропускає detail-завантаження для вже відомих item-level грантів. Для повторного detail-завантаження відомих item можна запустити `--mode backfill`.

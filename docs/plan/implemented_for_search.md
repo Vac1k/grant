@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення і реалізована частина Step 4.1 для трьох нових WP REST джерел. Всі додаткові надані links ще не реалізовані як production-ready source-specific connectors і ще не перевірені повними ingestion runs на реальних сайтах.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел. Stage Search ще не завершений, бо попереду залишаються фінальна real website validation матриця, підтвердження incremental behavior для всіх джерел, refresh policy для відомих open grants і операційна видимість search.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -881,13 +881,301 @@ https://gurt.org.ua/news/grants/rss/ -> 403 text/html
 
 Не робимо автоматичний bypass Cloudflare/human-check як частину connector-а.
 
+## Реалізовано: Step 4.2 - Хвиля 2
+
+Статус: виконано для implementable джерел хвилі 2.
+
+Дата реалізації: `2026-05-23`.
+
+У Step 4.2 закрито чотири джерела:
+
+- `nipo` - реалізовано;
+- `grant-market` - реалізовано;
+- `fundsforngos` - реалізовано;
+- `grantsense` - задокументовано як deferred після перевірки на реальному сайті.
+
+### Реалізовано Для `nipo`
+
+Source:
+
+```text
+https://nipo.gov.ua/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://nipo.gov.ua/wp-json/wp/v2/posts`;
+- RSS fallback: `https://nipo.gov.ua/feed/`;
+- search terms: `грант`, `конкурс`, `можливості`, `підтримка`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- WP `content.rendered` використовується як detail payload;
+- source позначається як ризик дайджестів/новин;
+- `needs_manual_review = true` за замовчуванням для normalized grant.
+
+Причина manual review: NIPO може повертати не тільки прямі grant competitions, а й новини, вебінари або дайджести, які містять інформацію про гранти.
+
+Перевірка на реальному сайті:
+
+```text
+nipo: grants=1 errors=0 status=unknown
+sample title: SME Fund 2026 для українського бізнесу: підсумки вебінару Talking about my idea (відео, презентації)
+```
+
+### Реалізовано Для `grant-market`
+
+Source:
+
+```text
+https://grant.market/
+```
+
+Поточна стратегія:
+
+- sitemap discovery: `https://grant.market/sitemap.xml`;
+- беруться тільки URL-и з path `/opp/`;
+- `source_record_id = canonical_url`;
+- `canonical_url = cleaned detail URL`;
+- detail HTML завантажується окремо;
+- title береться з `og:title`, `h1` або `title`;
+- summary береться з `og:description` або detail text;
+- deadline, documents, funding text і status витягуються deterministic helper-ами.
+
+Додано окремий connector:
+
+```text
+grant_tool/ingestion/connectors/grant_market.py
+```
+
+Перевірка на реальному сайті:
+
+```text
+grant-market: grants=1 errors=0 status=unknown
+sample title: Грант на покриття 85% вартості консалтингових проєктів для МСБ
+```
+
+### Реалізовано Для `fundsforngos`
+
+Source:
+
+```text
+https://www2.fundsforngos.org/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://www2.fundsforngos.org/wp-json/wp/v2/posts`;
+- RSS fallback: `https://www2.fundsforngos.org/feed/`;
+- search terms: `grant`, `funding`, `call for proposals`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- source позначається як широке міжнародне джерело;
+- `needs_manual_review = true` за замовчуванням для normalized grant.
+
+Важлива implementation-деталь: для WP REST джерел normalized title тепер пріоритетно береться з WP API `title.rendered`, а не з HTML `h1`, бо реальний fundsforNGOs detail content може мати generic heading типу `Programme Overview`.
+
+Перевірка на реальному сайті:
+
+```text
+fundsforngos: grants=1 errors=0 status=unknown
+sample title: CFAs: Artistic Creation Grant for Artists and Arts Organizations (Canada)
+```
+
+### GrantSense Deferred
+
+Source:
+
+```text
+https://grantsense.com.ua/
+```
+
+Рішення: не додано як робочий connector у Step 4.2.
+
+Підтверджена причина:
+
+- sitemap доступний;
+- WP REST і RSS не підтверджені як корисні public endpoints;
+- sitemap містить службові/категорійні/blog-сторінки, а не стабільний список прямих грантових можливостей;
+- перевірені сторінки `grants2024` і `grant/mizhnarodni-granti` повернули Next.js error shell без корисного server-rendered grant content;
+- немає безпечного правила для `discover()` без високого noise risk.
+
+Decision:
+
+```text
+deferred_after_validation
+```
+
+Це не rejected source. Він просто не має достатньо якісного public list/detail механізму для робочого ingestion на цьому кроці.
+
+### Source Seeding І Registry
+
+Оновлено source seed definitions:
+
+- додано `nipo`;
+- додано `grant-market`;
+- додано `fundsforngos`;
+- `grantsense` не додано в seed, бо джерело deferred;
+- `seed-sources` тепер створює або оновлює 10 configured sources: 4 MVP + 3 Step 4.1 + 3 Step 4.2 sources.
+
+Оновлено connector registry:
+
+- `CONNECTOR_CLASSES["nipo"]`;
+- `CONNECTOR_CLASSES["grant-market"]`;
+- `CONNECTOR_CLASSES["fundsforngos"]`.
+
+### Тести
+
+Додано fixtures:
+
+- `tests/fixtures/nipo/posts.json`;
+- `tests/fixtures/grant_market/sitemap.xml`;
+- `tests/fixtures/grant_market/detail.html`;
+- `tests/fixtures/fundsforngos/posts.json`.
+
+Додано automated coverage:
+
+- connector parsing test для `nipo`;
+- connector parsing test для `grant-market`;
+- connector parsing test для `fundsforngos`;
+- registry test для Step 4.2 source slugs;
+- ingestion service test для sitemap-based source;
+- seed source test оновлено з 7 до 10 configured sources.
+
+Останній локальний результат:
+
+```text
+Ran 55 tests
+OK
+```
+
+Додаткові перевірки:
+
+```text
+python -m compileall grant_tool tests
+alembic heads -> 20260522_0004 (head)
+```
+
+## Реалізовано: Step 4.3 - Хвиля 3
+
+Статус: виконано для джерел хвилі 3.
+
+Дата реалізації: `2026-05-23`.
+
+У Step 4.3 закрито два джерела:
+
+- `opportunitydesk` - реалізовано;
+- `grantforward` - задокументовано як deferred/restricted після перевірки на реальному сайті.
+
+### Реалізовано Для `opportunitydesk`
+
+Source:
+
+```text
+https://www.opportunitydesk.org/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://www.opportunitydesk.org/wp-json/wp/v2/posts`;
+- RSS fallback: `https://www.opportunitydesk.org/feed/`;
+- search terms: `grant`, `funding`, `call for proposals`;
+- category filter: `Awards and Grants`, WP category id `29`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- WP `content.rendered` використовується як detail payload;
+- source позначається як широке opportunity джерело;
+- `needs_manual_review = true` за замовчуванням для normalized grant.
+
+Додано source-specific digest filter:
+
+- posts з titles типу `66 Grants...`, `137 Grants...`, `opportunities currently open`, `closing in` не зберігаються як один грант;
+- для цього джерела connector бере більший WP REST sample у межах одного search run, щоб після відкидання digest/list posts знайти direct grant-like item.
+
+Причина manual review: Opportunity Desk містить не тільки гранти, а й awards, contests, fellowships, regional opportunities і digest/list posts.
+
+Перевірка на реальному сайті:
+
+```text
+opportunitydesk: grants=1 errors=0 status=closed
+sample title: UNESCO MAB Young Scientists Awards 2026 (up to $5,000)
+```
+
+`status=closed` не є помилкою, бо search stage не робить active-only filter. Статус визначився з дедлайну в detail content.
+
+### GrantForward Deferred
+
+Source:
+
+```text
+https://www.grantforward.com/
+```
+
+Рішення: не додано як робочий connector у Step 4.3.
+
+Підтверджена причина:
+
+- `https://www.grantforward.com/search` повертає `200 text/html`, але це search UI, а не стабільний public list із direct result links;
+- `https://www.grantforward.com/wp-json/wp/v2/posts?per_page=1&search=grant` повертає `404`;
+- `https://www.grantforward.com/feed/` повертає `404`;
+- `https://www.grantforward.com/sitemap.xml` повертає `404`;
+- HTML search page має login/subscription/free trial mechanics;
+- у статичному HTML немає direct grant result links, результати завантажуються через JS/search flow;
+- немає безпечного public `discover()` без використання restricted/dynamic search behavior.
+
+Decision:
+
+```text
+deferred_restricted_after_validation
+```
+
+Це не implemented source і не seed source. Його можна повернути в роботу тільки якщо буде знайдено дозволений public endpoint, export, API, sitemap із detail URLs або офіційний доступ.
+
+### Source Seeding І Registry
+
+Оновлено source seed definitions:
+
+- додано `opportunitydesk`;
+- `grantforward` не додано в seed, бо джерело deferred/restricted;
+- `seed-sources` тепер створює або оновлює 11 configured sources: 4 MVP + 3 Step 4.1 + 3 Step 4.2 + 1 Step 4.3 source.
+
+Оновлено connector registry:
+
+- `CONNECTOR_CLASSES["opportunitydesk"]`.
+
+### Тести
+
+Додано fixture:
+
+- `tests/fixtures/opportunitydesk/posts.json`.
+
+Додано automated coverage:
+
+- connector parsing test для `opportunitydesk`;
+- registry test для Step 4.3 source slug;
+- seed source test оновлено з 10 до 11 configured sources;
+- shared date parser покращено для англійських дат типу `June 21, 2026` і `21 June 2026`.
+
+Останній локальний результат:
+
+```text
+Ran 56 tests
+OK
+```
+
+Додаткові перевірки:
+
+```text
+python -m compileall grant_tool tests
+alembic heads -> 20260522_0004 (head)
+git diff --check -> OK
+```
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- реалізація решти source-specific connectors;
-- наступні хвилі реалізації по джерелах;
-- real website validation для всіх джерел;
+- фінальна real website validation матриця для всіх джерел;
+- підтвердження incremental behavior для всіх джерел;
 - регулярне оновлення відомих open grant details після extraction;
 - discovery dashboard або CLI report;
 - фінальне закриття Stage Search.

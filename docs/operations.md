@@ -1,25 +1,26 @@
-# App Operations Cheatsheet
+# Операційна Пам'ятка
 
-Run all commands from the project directory:
+Усі команди запускати з директорії проєкту:
 
 ```bash
 cd /Users/vac1k/Projects/ai_replace_grandwriters/grant
 ```
 
-This project is currently implemented through Stage 9:
+Проєкт зараз реалізований до Stage 9:
 
 - Stage 1/2: FastAPI, Docker Compose, PostgreSQL/pgvector, SQLAlchemy, Alembic.
-- Stage 2.5: source seeding and `JobRun` tracking.
-- Stage 3: MVP source ingestion for EU Funding, Prostir, Diia Business, and GURT.
-- Stage 4: manual CSV import for client profiles and application history.
-- Stage 5: deterministic feature extraction with optional OpenAI LLM enrichment.
+- Stage 2.5: seed джерел і tracking через `JobRun`.
+- Stage 3: ingestion MVP-джерел EU Funding, Prostir, Diia Business і GURT.
+- Stage Search Step 4.1/4.2/4.3: додаткові конектори під окремі джерела для Chas Zmin, EUFundingPortal.eu, Hromady, NIPO, Grant Market, fundsforNGOs і Opportunity Desk.
+- Stage 4: імпорт ручних CSV для client profiles і application history.
+- Stage 5: deterministic feature extraction з optional OpenAI LLM enrichment.
 - Stage 6: shortlist matching.
-- Stage 7: embeddings with local hash or OpenAI providers.
-- Stage 8: deterministic or OpenAI match explanations.
-- Stage 9: dashboard pages for overview, grants, clients, matches, and report view.
+- Stage 7: embeddings через local hash або OpenAI providers.
+- Stage 8: deterministic або OpenAI match explanations.
+- Stage 9: dashboard pages для overview, grants, clients, matches і report view.
 
-Implemented stages mind map: [`implemented_stages_mindmap.svg`](implemented_stages_mindmap.svg).
-Grant fields and extraction map: [`grant_fields_extraction_map.uk.svg`](grant_fields_extraction_map.uk.svg).
+Mind map реалізованих stage-ів: [`implemented_stages_mindmap.svg`](implemented_stages_mindmap.svg).
+Мапа grant fields і extraction: [`grant_fields_extraction_map.uk.svg`](grant_fields_extraction_map.uk.svg).
 
 ## Start The App
 
@@ -200,7 +201,7 @@ docker compose exec db psql -U grant -d grant -c "select client_name, grant_titl
 
 ## Збір Реальних Даних Про Гранти
 
-Зібрати всі MVP-джерела, максимум 20 записів на джерело:
+Зібрати всі налаштовані джерела, максимум 20 записів на джерело:
 
 ```bash
 docker compose exec app grant-tool ingest --all --limit 20 --mode incremental
@@ -216,6 +217,10 @@ docker compose exec app grant-tool ingest --source gurt --limit 20 --mode increm
 docker compose exec app grant-tool ingest --source chas-zmin --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source eufundingportal-eu --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source hromady --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source nipo --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode incremental
 ```
 
 Режими:
@@ -235,6 +240,12 @@ docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_
 - Prostir використовує RSS discovery і HTML detail parsing.
 - Diia Business використовує public frontend finance API, бо це якісніше за scraping Angular shell сторінок.
 - GURT використовує HTML list/detail parsing.
+- Chas Zmin, EUFundingPortal.eu, Hromady, NIPO і fundsforNGOs використовують WP REST search із RSS fallback.
+- Grant Market використовує sitemap discovery з фільтром `/opp/` і HTML detail parsing.
+- Opportunity Desk використовує WP REST search із category filter `Awards and Grants`, відкидає digest/list posts і має RSS fallback.
+- NIPO, fundsforNGOs і Opportunity Desk позначають результати як `needs_manual_review`, бо ці джерела можуть містити дайджести, новини або широкий міжнародний noise.
+- GrantSense поки не має production connector: live validation показала sitemap/service/category/blog pages і Next.js error shell без стабільного direct opportunity feed.
+- GrantForward поки не має production connector: live validation показала search UI без direct result links у HTML, `404` для WP REST/RSS/sitemap і login/subscription mechanics.
 - Ingestion спочатку зберігає item-level результат пошуку у `discovered_grant_items`.
 - Raw detail payload зберігається у `raw_grant_snapshots`.
 - Нормалізований грант записується або оновлюється у `grants`.
