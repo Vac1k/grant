@@ -69,16 +69,71 @@ MVP_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
     },
 )
 
+WAVE1_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "slug": "chas-zmin",
+        "name": "Chas Zmin grant posts",
+        "base_url": "https://chaszmin.com.ua",
+        "api_url": "https://chaszmin.com.ua/wp-json/wp/v2/posts",
+        "feed_url": "https://chaszmin.com.ua/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search for grant-like posts; RSS is fallback.",
+        "source_metadata": {
+            "priority": 5,
+            "wave": "4.1",
+            "country_focus": ["Ukraine"],
+            "wp_search_terms": ["грант", "конкурс", "можливості"],
+        },
+    },
+    {
+        "slug": "eufundingportal-eu",
+        "name": "EUFundingPortal.eu",
+        "base_url": "https://eufundingportal.eu",
+        "api_url": "https://eufundingportal.eu/wp-json/wp/v2/posts",
+        "feed_url": "https://eufundingportal.eu/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search as an aggregator source; keep duplicate risk with official EU Funding source in metadata.",
+        "source_metadata": {
+            "priority": 6,
+            "wave": "4.1",
+            "region_focus": ["EU", "Ukraine"],
+            "aggregator": True,
+            "duplicate_risk_with": ["eu-funding"],
+            "wp_search_terms": ["grant", "funding", "programme"],
+        },
+    },
+    {
+        "slug": "hromady",
+        "name": "Hromady grant and community opportunities",
+        "base_url": "https://hromady.org",
+        "api_url": "https://hromady.org/wp-json/wp/v2/posts",
+        "feed_url": "https://hromady.org/feed/",
+        "access_strategy": AccessStrategy.WP_REST,
+        "rate_limit_seconds": 5,
+        "notes": "Use WordPress REST search for community grant-like posts; RSS is fallback.",
+        "source_metadata": {
+            "priority": 7,
+            "wave": "4.1",
+            "country_focus": ["Ukraine"],
+            "wp_search_terms": ["грант", "конкурс", "підтримка громад", "можливості"],
+        },
+    },
+)
+
+SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = MVP_SOURCE_DEFINITIONS + WAVE1_SOURCE_DEFINITIONS
+
 
 def seed_mvp_sources(repository: GrantRepository) -> tuple[JobRun, list[Source]]:
     job = repository.start_job(
         job_type=JobType.SEED_SOURCES,
-        job_metadata={"source_slugs": [source["slug"] for source in MVP_SOURCE_DEFINITIONS]},
+        job_metadata={"source_slugs": [source["slug"] for source in SOURCE_DEFINITIONS]},
     )
     seeded_sources: list[Source] = []
 
     try:
-        for source_definition in MVP_SOURCE_DEFINITIONS:
+        for source_definition in SOURCE_DEFINITIONS:
             existing = repository.get_source_by_slug(source_definition["slug"])
             source = repository.upsert_source(**source_definition)
             seeded_sources.append(source)

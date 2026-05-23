@@ -12,10 +12,13 @@ from grant_tool.db import Base
 from grant_tool.db.models import AccessStrategy, DiscoveredGrantItem, Grant, JobStatus, Source
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.connectors import (
+    ChasZminConnector,
     CONNECTOR_CLASSES,
     DiiaBusinessConnector,
+    EUFundingPortalEuConnector,
     EUFundingConnector,
     GurtConnector,
+    HromadyConnector,
     ProstirConnector,
 )
 from grant_tool.ingestion.http import HttpResponse
@@ -244,6 +247,85 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(result.errors[0].stage, "discover")
         self.assertEqual(result.errors[0].source_url, list_url)
 
+    def test_chas_zmin_connector_parses_wp_rest_posts(self) -> None:
+        api_url = "https://chaszmin.com.ua/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="chas-zmin",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://chaszmin.com.ua",
+            api_url=api_url,
+            feed_url="https://chaszmin.com.ua/feed/",
+        )
+        connector = ChasZminConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "chas_zmin/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "101")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "uk")
+        self.assertEqual(grant.funding_amount_text, "300 000 грн")
+        self.assertTrue(grant.documents)
+
+    def test_eufundingportal_eu_connector_marks_aggregator_review(self) -> None:
+        api_url = "https://eufundingportal.eu/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="eufundingportal-eu",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://eufundingportal.eu",
+            api_url=api_url,
+            feed_url="https://eufundingportal.eu/feed/",
+        )
+        connector = EUFundingPortalEuConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "eufundingportal_eu/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "202")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "en")
+        self.assertTrue(grant.needs_manual_review)
+        self.assertIn("official EU Funding", grant.manual_review_reason)
+
+    def test_hromady_connector_parses_wp_rest_posts(self) -> None:
+        api_url = "https://hromady.org/wp-json/wp/v2/posts"
+        source = self.source(
+            slug="hromady",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://hromady.org",
+            api_url=api_url,
+            feed_url="https://hromady.org/feed/",
+        )
+        connector = HromadyConnector(
+            source=source,
+            http_client=FakeHttpClient({api_url: json_response(api_url, "hromady/posts.json")}),
+        )
+
+        result = connector.run(limit=20)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 1)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "303")
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.language, "uk")
+        self.assertEqual(grant.opportunity_type, "grant")
+
+    def test_connector_registry_includes_wave1_sources(self) -> None:
+        self.assertIs(CONNECTOR_CLASSES["chas-zmin"], ChasZminConnector)
+        self.assertIs(CONNECTOR_CLASSES["eufundingportal-eu"], EUFundingPortalEuConnector)
+        self.assertIs(CONNECTOR_CLASSES["hromady"], HromadyConnector)
+
     def test_ingestion_service_saves_snapshots_grants_and_job(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"
         detail_url = "https://www.prostir.ua/grant/test-grant/"
@@ -278,6 +360,31 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(grant_count, 1)
         self.assertEqual(discovered_count, 1)
         self.assertEqual(discovered_item.detail_fetch_status, DetailFetchStatus.SKIPPED_KNOWN.value)
+
+    def test_ingestion_service_saves_wave1_wp_rest_source(self) -> None:
+        api_url = "https://chaszmin.com.ua/wp-json/wp/v2/posts"
+        self.source(
+            slug="chas-zmin",
+            access_strategy=AccessStrategy.WP_REST,
+            base_url="https://chaszmin.com.ua",
+            api_url=api_url,
+            feed_url="https://chaszmin.com.ua/feed/",
+        )
+        fake_http = FakeHttpClient({api_url: json_response(api_url, "chas_zmin/posts.json")})
+        service = IngestionService(
+            repository=self.repository,
+            connector_classes={"chas-zmin": CONNECTOR_CLASSES["chas-zmin"]},
+            http_client_factory=lambda _rate_limit: fake_http,
+        )
+
+        summary = service.run_source("chas-zmin", limit=20)
+        grant_count = self.session.scalar(select(func.count(Grant.id)))
+        discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
+
+        self.assertEqual(summary.status, JobStatus.SUCCESS.value)
+        self.assertEqual(summary.created_count, 1)
+        self.assertEqual(grant_count, 1)
+        self.assertEqual(discovered_count, 1)
 
 
 if __name__ == "__main__":

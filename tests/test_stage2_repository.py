@@ -196,17 +196,20 @@ class RepositoryTestCase(unittest.TestCase):
 
         source_count = self.session.scalar(select(func.count(Source.id)))
 
-        self.assertEqual(source_count, 4)
-        self.assertEqual(len(first_sources), 4)
-        self.assertEqual(len(second_sources), 4)
-        self.assertEqual(first_job.created_count, 4)
+        self.assertEqual(source_count, 7)
+        self.assertEqual(len(first_sources), 7)
+        self.assertEqual(len(second_sources), 7)
+        self.assertEqual(first_job.created_count, 7)
         self.assertEqual(first_job.updated_count, 0)
         self.assertEqual(second_job.created_count, 0)
-        self.assertEqual(second_job.updated_count, 4)
+        self.assertEqual(second_job.updated_count, 7)
         self.assertEqual(first_job.status, JobStatus.SUCCESS.value)
         self.assertEqual(second_job.status, JobStatus.SUCCESS.value)
         self.assertIsNotNone(self.repository.get_source_by_slug("eu-funding"))
         self.assertEqual(self.repository.get_source_by_slug("prostir").access_strategy, "rss")
+        self.assertEqual(self.repository.get_source_by_slug("chas-zmin").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("eufundingportal-eu").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("hromady").access_strategy, "wp_rest")
 
 
 if __name__ == "__main__":

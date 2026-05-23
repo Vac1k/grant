@@ -34,7 +34,7 @@ def _cmd_seed_sources(_args: argparse.Namespace) -> None:
         job, sources = seed_mvp_sources(repository)
         session.commit()
 
-    print(f"Seeded {len(sources)} MVP sources")
+    print(f"Seeded {len(sources)} configured sources")
     print(f"Job {job.id}: {job.status}")
     for source in sources:
         print(f"- {source.slug}: {source.name}")
@@ -235,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="grant-tool")
     subparsers = parser.add_subparsers(dest="command")
 
-    seed_sources = subparsers.add_parser("seed-sources", help="Create or update MVP grant sources")
+    seed_sources = subparsers.add_parser("seed-sources", help="Create or update configured grant sources")
     seed_sources.set_defaults(func=_cmd_seed_sources)
 
     jobs = subparsers.add_parser("jobs", help="Inspect job history")
@@ -272,7 +272,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest = subparsers.add_parser("ingest", help="Run grant ingestion")
     ingest_source = ingest.add_mutually_exclusive_group(required=True)
     ingest_source.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), help="Source slug to ingest")
-    ingest_source.add_argument("--all", action="store_true", help="Ingest all registered MVP sources")
+    ingest_source.add_argument("--all", action="store_true", help="Ingest all registered sources")
     ingest.add_argument("--limit", type=int, default=20, help="Maximum grants per source")
     ingest.add_argument(
         "--mode",

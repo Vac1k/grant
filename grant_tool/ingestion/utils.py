@@ -232,10 +232,12 @@ def extract_funding_text(text: str | None) -> str | None:
     pattern = re.compile(
         r"(?i)(?:€|eur|euro|грн|uah|usd|\$)?\s?\d[\d\s.,]{2,}\s?(?:€|eur|euro|грн|uah|usd|\$|тис\.?|млн\.?)?"
     )
-    match = pattern.search(cleaned)
-    if match:
-        return clean_text(match.group(0))
-    return None
+    matches = [clean_text(match.group(0)) for match in pattern.finditer(cleaned)]
+    markers = ("€", "eur", "euro", "грн", "uah", "usd", "$", "тис", "млн")
+    for match in matches:
+        if match and any(marker in match.lower() for marker in markers):
+            return match
+    return next((match for match in matches if match), None)
 
 
 def status_from_deadline(deadline_at: datetime | None) -> str:

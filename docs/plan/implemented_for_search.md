@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована тільки базова інфраструктура search/link extraction і адаптація 4 MVP-джерел. Всі додаткові надані links ще не реалізовані як production-ready source-specific connectors і ще не перевірені на реальних сайтах.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення і реалізована частина Step 4.1 для трьох нових WP REST джерел. Всі додаткові надані links ще не реалізовані як production-ready source-specific connectors і ще не перевірені повними ingestion runs на реальних сайтах.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -274,15 +274,620 @@ Ran 46 tests
 OK
 ```
 
+## Реалізовано: Step 1 - Аудит Усіх Наданих Джерел
+
+Статус: виконано.
+
+Дата audit: `2026-05-23`.
+
+Мета Step 1 була пройтись по кожному сайту з `docs/initial_sources.md` і визначити найкращий спосіб діставання якісних даних.
+
+Важливо: це був endpoint/access audit, а не реалізація нових production connectors. Для кожного джерела перевірено доступні API/RSS/sitemap/list endpoints і визначено рекомендований підхід.
+
+### Summary Audit Matrix
+
+| Джерело | Slug | Live evidence | Рекомендована стратегія | Incremental key | Якість | Ризик | Рішення |
+|---|---|---|---|---|---|---|---|
+| EU Funding & Tenders Portal | `eu-funding` | Portal `200`; Search API endpoint відповідає `405` на GET, бо поточний connector має використовувати POST. | API-first через EU Search API. | `source_record_id` з API id/reference. | Висока | Низький/середній | `implement`, вже є MVP connector, потрібна real POST validation. |
+| Prostir | `prostir` | RSS `200`; WP grants endpoint redirects/returns HTML, тому RSS лишається кращим. | RSS discovery + HTML detail. | RSS GUID або canonical URL. | Середня/висока | Низький | `implement`, вже є MVP connector. |
+| Diia Business | `diia-business` | Frontend finance API `200`. | Public frontend API list + API detail; sitemap/HTML fallback. | service id або slug. | Висока | Середній, бо frontend API може змінитись. | `implement`, вже є MVP connector. |
+| GURT | `gurt` | Правильний URL `https://gurt.org.ua/news/grants/`; HTML/RSS зараз повертають `403` через Cloudflare/human-check. | HTML list + HTML detail тільки якщо є дозволений доступ або альтернативний public endpoint. | canonical URL. | Середня | Високий через Cloudflare/human-check. | `implemented_locally_not_production_validated`, connector є, потрібен легальний спосіб live access. |
+| GURT grant competitions | `gurt-grant-competitions` | Уточнено користувачем: це не окремий правильний source для поточної задачі; правильний link - `https://gurt.org.ua/news/grants/`. | Не реалізовувати як окреме джерело. | n/a | n/a | n/a | `removed_as_wrong_duplicate_source`. |
+| Grant Market | `grant-market` | `sitemap.xml` `200`, багато `/opp/...` URLs; WP REST/RSS `404`. | Sitemap discovery + HTML detail for `/opp/` URLs. | canonical URL. | Середня/висока | Середній | `implement`. |
+| Chas Zmin | `chas-zmin` | WP REST `200`, RSS `200`, WP search for `грант` повертає релевантні grant posts. | WP REST primary, RSS fallback. | WP post id, fallback canonical URL. | Висока | Низький | `implement`, перша хвиля. |
+| GrantSense | `grantsense` | Sitemap `200`; WP REST/RSS `404`; sitemap має service/blog/grant category pages, але не очевидний active opportunities feed. | Sitemap/HTML only; потрібна фільтрація і перевірка, чи це source opportunities, а не service/content marketing. | canonical URL або content hash. | Низька/середня | Середній/високий через noise. | `defer`, реалізувати тільки якщо підтвердиться корисність як grant opportunity source. |
+| EUFundingPortal.eu | `eufundingportal-eu` | WP REST `200`, RSS `200`, sitemap `200`; categories містять funding/grants programmes. | WP REST primary, RSS fallback; category filters. | WP post id, fallback canonical URL/RSS GUID. | Середня/висока | Середній через aggregator/paywall/membership risk. | `implement_with_limitations`. |
+| fundsforNGOs | `fundsforngos` | WP REST `200`, RSS `200`, search for `grant` повертає direct grant posts. | WP REST primary with category/topic/country filters. | WP post id, fallback canonical URL. | Висока, але широка | Середній через rate limits/noise. | `implement_with_filters`. |
+| Opportunity Desk | `opportunitydesk` | WP REST `200`, RSS `200`, sitemap `200`, search for `grant` повертає direct grant posts. | WP REST primary, RSS fallback, strong filters. | WP post id, fallback canonical URL/RSS GUID. | Середня | Середній/високий через noisy opportunities. | `implement_with_filters`. |
+| GrantForward | `grantforward` | `/search` `200`, але WP REST/RSS/sitemap `404`; search page heavy HTML/JS і може бути account/institution product. | Restricted HTML/search page only; public ingestion uncertain. | canonical URL only if public detail URLs доступні. | Невідома | Високий | `defer_or_reject_after_detail_access_check`. |
+| NIPO | `nipo` | WP REST `200`, RSS `200`, search for `грант` повертає grant-related posts. | WP REST primary, RSS fallback; likely digest/news source. | WP post id, fallback canonical URL. | Середня | Середній через digest/noise. | `implement_with_limitations`. |
+| Hromady | `hromady` | WP REST `200`, RSS `200`, search for `грант` повертає релевантні posts. | WP REST primary, RSS fallback; category/search filters. | WP post id, fallback canonical URL. | Середня/висока | Низький/середній | `implement`, перша хвиля або backup with NIPO. |
+
+### Endpoint Evidence
+
+Це короткий evidence log з live endpoint checks.
+
+| Джерело | Перевірені endpoints | Результат |
+|---|---|---|
+| EU Funding & Tenders Portal | `https://ec.europa.eu/info/funding-tenders/opportunities/portal/`; `https://api.tech.ec.europa.eu/search-api/prod/rest/search?...` | Portal `200`; API GET `405`, очікувано для connector-а, який використовує POST. |
+| Prostir | `https://www.prostir.ua/category/grants/feed/`; `https://www.prostir.ua/wp-json/wp/v2/grants?per_page=1` | RSS `200`; WP endpoint не є кращим primary, бо повертає HTML/redirect. |
+| Diia Business | `https://api.business.diia.gov.ua/api/front/finance?take=1&skip=0` | API `200 application/json`. |
+| GURT | `https://gurt.org.ua/news/grants/`; `https://gurt.org.ua/news/grants/rss/` | `403 text/html`; користувач підтвердив Cloudflare/human-check. |
+| GURT grant competitions | `https://grants.gurt.org.ua/` | Прибрано як окреме джерело після уточнення користувача; правильний source - `gurt`. |
+| Grant Market | `https://grant.market/sitemap.xml`; `https://grant.market/wp-json/`; `https://grant.market/feed/` | Sitemap `200`; WP/RSS `404`; sitemap має багато `/opp/` URLs. |
+| Chas Zmin | `https://chaszmin.com.ua/wp-json/`; `.../wp/v2/posts`; `.../feed/`; WP search `грант` | WP REST `200`; RSS `200`; search returns grant posts. |
+| GrantSense | `https://www.grantsense.com.ua/sitemap.xml`; `.../wp-json/`; `.../feed/` | Sitemap `200`; WP/RSS `404`; source likely HTML/sitemap with high noise. |
+| EUFundingPortal.eu | `https://eufundingportal.eu/wp-json/`; `.../feed/`; `.../sitemap.xml`; WP categories | WP REST/RSS/sitemap `200`; categories contain grants/funding programmes. |
+| fundsforNGOs | `https://www2.fundsforngos.org/wp-json/wp/v2/posts?per_page=1`; `.../feed/`; search `grant` | WP REST `200`; RSS `200`; search returns grant posts. |
+| Opportunity Desk | `https://opportunitydesk.org/wp-json/wp/v2/posts?per_page=1`; `.../feed/`; `.../sitemap.xml`; search `grant` | WP REST/RSS/sitemap `200`; search returns grant posts. |
+| GrantForward | `https://www.grantforward.com/search`; `.../wp-json/`; `.../feed/`; `.../sitemap.xml` | Search page `200`; WP/RSS/sitemap `404`; high restriction/account risk. |
+| NIPO | `https://nipo.gov.ua/wp-json/wp/v2/posts?per_page=1`; `.../feed/`; search `грант` | WP REST `200`; RSS `200`; search returns grant-related posts. |
+| Hromady | `https://hromady.org/wp-json/wp/v2/posts?per_page=1`; `.../feed/`; search `грант` | WP REST `200`; RSS `200`; search returns grant posts. |
+
+### Рекомендований Порядок Після Audit
+
+Step 1 підтвердив два сильні кандидати з початкової хвилі і виявив один ризикований слот:
+
+1. `Chas Zmin` - найкращий перший кандидат: WP REST/RSS працюють, search returns grant posts.
+2. `EUFundingPortal.eu` - WP REST/RSS працюють, але треба врахувати aggregator/paywall risk.
+3. `Hromady` або `NIPO` - обидва мають WP REST/RSS; Hromady виглядає більш прямим grant source, NIPO більше схожий на news/digest source.
+4. `GURT` потребує окремого production access рішення, бо правильний URL блокується Cloudflare/human-check.
+
+Якщо для `GURT` не буде легального способу automated access, його не можна позначати production validated. Якщо потрібен четвертий fully validated source у хвилі 1, найкращий кандидат на заміну слота - `Grant Market`, бо sitemap має багато `/opp/` URLs і виглядає технічно доступнішим. Таку заміну треба погодити окремо.
+
+### Ризики, Які Виявив Audit
+
+- `GURT`: правильний URL блокується Cloudflare/human-check; не можна робити bypass без дозволеного підходу.
+- `GrantForward`: search page доступна, але немає простого public API/RSS/sitemap; високий ризик login/institution restriction.
+- `GrantSense`: sitemap доступний, але сайт більше схожий на service/content site, а не стабільний feed грантових можливостей.
+- `EUFundingPortal.eu`: корисний aggregator, але треба перевірити, скільки detail content доступно без membership.
+- `fundsforNGOs` і `OpportunityDesk`: багато релевантних posts, але потрібні filters через noise і міжнародну широту.
+
+## Реалізовано: Step 2 - Уточнення Standardized Initial Table
+
+Статус: виконано.
+
+Дата рішення: `2026-05-23`.
+
+Мета Step 2 була уточнити, які саме поля має заповнювати search/link extraction stage, які поля можуть бути `null`, як позначати якість item і як відрізняти неповний search result від справжньої помилки.
+
+Важливе рішення: на цьому step не додаємо нову міграцію і не міняємо структуру БД. Поточна таблиця `discovered_grant_items` достатня для v1, а quality/decision hints зберігаються в `discovery_metadata`. Якщо після реальних ingestion runs буде потрібно часто фільтрувати по якості на рівні SQL, тоді окремим майбутнім schema step можна винести частину metadata у колонки.
+
+### Фінальна Роль Таблиці
+
+`discovered_grant_items` - це standardized initial table для результату пошуку.
+
+Вона зберігає не повний грант, а candidate item, який connector знайшов у API, RSS, sitemap, HTML list або search page.
+
+Правильний pipeline:
+
+```text
+source connector
+  -> discover()
+  -> discovered_grant_items
+  -> fetch_detail()
+  -> raw_grant_snapshots
+  -> normalize()
+  -> grants
+```
+
+`raw_grant_snapshots` лишається audit table для raw payload/html/text. Її не треба змушувати мати всі бізнес-поля. Повна бізнес-нормалізація живе в `grants`.
+
+### Поля Таблиці І Правила Заповнення
+
+| Поле | Обов'язковість | Правило |
+|---|---|---|
+| `source_id` | required | Внутрішній id джерела з таблиці `sources`. |
+| `source_slug` | required | Людинозрозумілий slug джерела, наприклад `chas-zmin`. |
+| `source_url` | required | Абсолютний URL item або detail page. Connector не має створювати item без URL. |
+| `canonical_url` | optional, але бажаний | Очищений URL без tracking params. Використовується для deduplication. |
+| `source_record_id` | optional, але пріоритетний | Stable id з API/WP/RSS, якщо джерело його дає. |
+| `title_hint` | optional, але бажаний | Назва з list/API/RSS. Якщо її немає, item не failed автоматично, але має отримати нижчу якість. |
+| `summary_hint` | optional | Короткий опис із list/API/RSS, якщо доступний. |
+| `published_at_hint` | optional | Дата публікації з list/API/RSS, якщо джерело її дає. |
+| `deadline_hint` | optional | Текстовий дедлайн із list/API/RSS. Не перетворюємо його силоміць у дату на search stage. |
+| `listing_url` | optional | URL сторінки або feed, де item був знайдений. |
+| `listing_position` | optional | Позиція item у списку під час discovery run. |
+| `first_seen_at` | required | Коли item вперше знайдений системою. |
+| `last_seen_at` | required | Коли item востаннє бачили в source listing/search. |
+| `discovery_status` | required | `new`, `known`, `skipped` або `failed`. |
+| `detail_fetch_status` | required | `not_fetched`, `fetched`, `failed` або `skipped_known`. |
+| `content_hash` | optional | Hash для fallback identity, особливо якщо немає stable id і URL недостатньо надійний. |
+| `discovery_metadata` | required JSON object | Source-specific metadata, quality flags, parser warnings і evidence. |
+
+### Identity Rules
+
+Для безпечного incremental search кожен item має мати стабільну identity.
+
+Пріоритет deduplication:
+
+1. `source_record_id`;
+2. `canonical_url`;
+3. `content_hash`.
+
+Правила:
+
+- якщо API або WP REST дає id, використовуємо його як `source_record_id`;
+- якщо є direct detail URL, зберігаємо його як `source_url` і очищену версію як `canonical_url`;
+- якщо item знаходиться на агрегованій сторінці без окремого URL, створюємо `content_hash` із стабільних частин: source slug, title, deadline text, funder або fragment text;
+- якщо немає ні `source_record_id`, ні `canonical_url`, ні `content_hash`, item не можна безпечно зберігати як normal discovered item;
+- tracking params, session params і pagination params не мають входити в `canonical_url`.
+
+### Null Rules
+
+`null` дозволений, якщо сайт реально не дає поле на search/list рівні.
+
+Не вигадуємо значення для таких полів:
+
+- `title_hint`;
+- `summary_hint`;
+- `published_at_hint`;
+- `deadline_hint`;
+- `source_record_id`;
+- `canonical_url`.
+
+Не робимо active-only фільтр на search stage. Якщо статус не зрозумілий, зберігаємо `status_hint = "unknown"` у `discovery_metadata`, а фінальний статус визначається пізніше через detail extraction і normalized grant fields.
+
+### Low Quality Vs Failed
+
+`failed` означає, що connector не може створити безпечний candidate item.
+
+Приклади `failed`:
+
+- немає `source_url`;
+- немає жодного stable identity key;
+- list/API/RSS response не парситься;
+- detail link неможливо побудувати;
+- source повернув технічну помилку, через яку немає item.
+
+`low_quality` означає, що item можна зберегти, але він потребує обережної обробки.
+
+Приклади `low_quality`:
+
+- є URL, але немає нормального `title_hint`;
+- є title, але він дуже generic;
+- немає deadline/status hints;
+- source category широка і може містити non-grant content;
+- item схожий на новину або digest, а не прямий grant competition;
+- є підозра на duplicate aggregator content.
+
+### Quality Metadata Contract
+
+На v1 ці flags зберігаються в `discovery_metadata`, а не окремими колонками.
+
+Рекомендована структура:
+
+```json
+{
+  "discovery_method": "wp_rest",
+  "quality_level": "high",
+  "quality_reasons": [],
+  "is_probably_grant": true,
+  "is_probably_grant_reason": "title/category contains grant terms",
+  "status_hint": "unknown",
+  "deadline_hint_source": "none",
+  "requires_manual_review": false,
+  "manual_review_reason": null,
+  "evidence_text": "short source text used for decision",
+  "parser_warnings": []
+}
+```
+
+Дозволені значення:
+
+- `discovery_method`: `api`, `wp_rest`, `rss`, `sitemap`, `html`, `search_page`, `ai_assisted_html`;
+- `quality_level`: `high`, `medium`, `low`;
+- `is_probably_grant`: `true`, `false` або `null`;
+- `status_hint`: `open`, `closed`, `unknown` або `null`;
+- `deadline_hint_source`: `api`, `wp_rest`, `rss`, `html`, `text`, `none`.
+
+### Рішення По Спірних Полях
+
+`quality_score`: не додаємо як DB column у v1. Numeric score буде виглядати точним, хоча фактично правила ще не відкалібровані на всіх сайтах. Використовуємо `quality_level` і `quality_reasons` у `discovery_metadata`.
+
+`is_probably_grant`: не додаємо як DB column у v1. Зберігаємо як hint у `discovery_metadata`. Це не hard filter.
+
+`active_hint`: не використовуємо таку назву, бо ми домовились не робити active-only search. Замість цього використовуємо `status_hint` у `discovery_metadata`, і тільки як підказку.
+
+`requires_manual_review`: не додаємо як DB column у `discovered_grant_items` у v1. Зберігаємо в `discovery_metadata`. У фінальній normalized таблиці `grants` вже є `needs_manual_review` і `manual_review_reason`.
+
+### Quality Gate Для Junior Developer
+
+`high`:
+
+- є `source_url`;
+- є `source_record_id` або чистий `canonical_url`;
+- є нормальний `title_hint`;
+- source category/API endpoint явно grant-related;
+- detail fetch очікувано можливий.
+
+`medium`:
+
+- є `source_url`;
+- identity стабільна;
+- title або summary слабкі, але item схожий на грант;
+- status/deadline можуть бути невідомі до detail page.
+
+`low`:
+
+- є URL і identity, але контент шумний;
+- title generic;
+- deadline/status не видно;
+- source є digest/news/aggregator і може давати багато нерелевантних item.
+
+`failed`:
+
+- немає URL;
+- немає stable identity;
+- неможливо розпарсити listing;
+- connector не може безпечно побудувати item.
+
+### Checklist Для `discover()`
+
+Кожен новий connector у `discover()` має зробити такі кроки:
+
+1. Отримати list/API/RSS/sitemap/search response.
+2. Витягнути тільки grant-like candidate items, без active-only фільтра.
+3. Побудувати абсолютний `source_url`.
+4. Побудувати очищений `canonical_url`, якщо є direct detail URL.
+5. Заповнити `source_record_id`, якщо API/RSS/WP REST дає stable id.
+6. Заповнити `title_hint`, якщо title доступний.
+7. Заповнити `summary_hint`, `published_at_hint`, `deadline_hint`, якщо джерело дає ці дані.
+8. Заповнити `listing_url` і `listing_position`, якщо item знайдений у списку.
+9. Створити `content_hash`, якщо identity слабка або item не має stable id.
+10. Записати `discovery_metadata.discovery_method`.
+11. Записати `discovery_metadata.quality_level` і `quality_reasons`.
+12. Записати `is_probably_grant`, `status_hint`, `requires_manual_review`, якщо connector може це визначити.
+13. Не відкидати item тільки тому, що статус або дедлайн невідомі.
+14. Не зберігати item, якщо немає безпечної identity.
+
+### Acceptance Step 2
+
+Step 2 закритий, бо:
+
+- визначено фінальний schema description для `discovered_grant_items`;
+- визначено required/optional/null правила;
+- визначено identity і deduplication правила;
+- визначено low quality vs failed;
+- визначено quality metadata contract;
+- прийнято рішення не додавати `quality_score`, `is_probably_grant`, `active_hint`, `requires_manual_review` як DB columns у v1;
+- зафіксовано, що `active-only` не використовується на search stage.
+
+## Реалізовано: Step 3 - Логіка Початкового Наповнення
+
+Статус: виконано як planning/implementation contract.
+
+Дата рішення: `2026-05-23`.
+
+Мета Step 3 була визначити, як саме робити початкове наповнення для кожного джерела: скільки брати записів, які filters використовувати, як не пропустити релевантні grant-like opportunities і як не робити небезпечний active-only filter на search stage.
+
+Важливо: Step 3 не є реалізацією нових конекторів. Він закриває правила, за якими Step 4 має реалізовувати source-specific connectors. Нові production-ready connectors, automated tests і real website validation залишаються в Step 4.
+
+### Головне Правило Початкового Наповнення
+
+Search stage збирає всі релевантні grant-like opportunities, які джерело дозволяє безпечно знайти через API/RSS/WP REST/sitemap/HTML list.
+
+Не відкидаємо item тільки через те, що:
+
+- status не видно на list рівні;
+- deadline не видно на list рівні;
+- deadline є текстовий або rolling;
+- джерело не має structured active/closed state;
+- сторінка є digest/news, але містить пряму grant opportunity.
+
+Status і deadline визначаються пізніше:
+
+```text
+discover()
+  -> status_hint/deadline_hint тільки як підказка
+  -> fetch_detail()
+  -> normalize()
+  -> grants.status / grants.deadline_at / grants.deadline_text
+```
+
+### Режими Початкового І Наступного Збору
+
+Початкове наповнення:
+
+```bash
+grant-tool ingest --source <slug> --limit <source_limit> --mode backfill
+```
+
+Для першого запуску `backfill` потрібен, бо він дозволяє пройти detail-fetch для всіх знайдених item у межах safe limit.
+
+Наступні регулярні запуски:
+
+```bash
+grant-tool ingest --source <slug> --limit <source_limit> --mode incremental
+```
+
+`incremental` перечитує source listing/search endpoint, але не робить повторний detail-fetch для item, які вже є в `discovered_grant_items`.
+
+Правило для старої сторінки з новим грантом: listing/search endpoint все одно перечитується кожного запуску. Якщо на тій самій сторінці з'явився новий item із новою identity, він буде доданий як новий discovered item. Якщо змінився вже відомий grant, це не задача Step 3; це закривається окремою refresh policy у Step 7.
+
+### Загальні Safe Limits
+
+Ці limits є стартовими правилами для реалізації конекторів. Їх можна зменшувати під час real website validation, якщо сайт повільний або блокує часті запити.
+
+| Тип доступу | Initial backfill v1 | Incremental v1 | Max requests per run | Rate limit |
+|---|---:|---:|---:|---:|
+| Official API | 100-200 items | 20-50 items | 5-10 API requests | 2-5 sec |
+| Public frontend API | 50-100 items | 20-50 items | 5-10 API requests | 5 sec |
+| WordPress REST | 50-100 posts | 20-50 posts | 3-6 API requests | 5 sec |
+| RSS | feed size або до 50 items | feed size або до 20 items | 1-2 requests | 5 sec |
+| Sitemap + HTML detail | 50-100 URLs | 20-50 URLs | 1 sitemap + detail requests only for new items | 5-8 sec |
+| HTML list + detail | 20-50 items | 10-20 items | 1-3 list pages + detail requests only for new items | 8-10 sec |
+| Restricted/uncertain source | 0 production items | 0 production items | тільки manual validation | conservative |
+
+`--limit` у CLI лишається верхньою межею для конкретного запуску. Connector не має перевищувати цей limit без явної причини.
+
+### Rule Для Grant-Like Filtering
+
+Фільтр має прибирати очевидний шум, але не має вирішувати фінальний статус гранту.
+
+Grant-like item можна брати, якщо виконується хоча б один сильний сигнал:
+
+- URL або category містить grant/грант/конкурс/funding/opportunity;
+- title містить grant/funding/call/competition/грант/конкурс/програма підтримки;
+- API type явно означає funding opportunity;
+- source list уже є grant-specific category;
+- detail URL веде на сторінку opportunity/program/competition.
+
+Item треба пропустити на search stage, якщо:
+
+- це service page самого сайту без конкретної opportunity;
+- це marketing/blog page без grant opportunity;
+- це archive/category/tag page, а не item;
+- немає safe identity;
+- немає direct detail URL і неможливо створити стабільний item-level hash.
+
+### Source-Specific Initial Collection Rules
+
+| Джерело | Initial backfill rule | Pagination / request limit | Filters без active-only | Status/deadline hints | Причина |
+|---|---|---|---|---|---|
+| `eu-funding` | Зібрати 100-200 opportunities через official API у межах `--limit`. | 1-2 API pages; `pageSize` не більший за `--limit` для v1. | API query `type in [1,2]`, `programmePeriod = 2021 - 2027`; не фільтрувати тільки active. | Брати deadline/status із API metadata як hints. | Найбільш структуроване джерело, низький noise. |
+| `prostir` | Зібрати RSS grant feed до 50-100 items; HTML list тільки fallback. | 1 RSS request; HTML list fallback без глибокого archive crawl. | RSS/category already grant-specific; не відкидати через відсутній deadline у RSS. | Deadline переважно з detail HTML, RSS date тільки `published_at_hint`. | RSS стабільніший за WP grants endpoint. |
+| `diia-business` | Зібрати finance API records до 50-100 items. | 1 list API request `take=<limit>, skip=0`; detail fetch тільки для new/backfill items. | Брати finance/program records; не відкидати non-grant finance support на search stage, але ставити quality warning. | `finalProgramTerm` або схожі API attributes як `deadline_hint`; status пізніше. | Frontend API структурований, але містить ширші finance services. |
+| `gurt` | Зібрати 20-50 links із `/news/grants/`, якщо runtime access підтверджений або сайт надасть дозволений public endpoint. | 1 HTML list page для v1; pagination тільки після validation. | Path filter `/news/grants/`; не брати header/sidebar/archive links; не обходити Cloudflare/human-check. | Deadline з detail HTML; list status не обов'язковий. | Корисне українське джерело, але production access блокується Cloudflare. |
+| `grant-market` | Зібрати 50-100 `/opp/` URLs із sitemap. | 1 sitemap request; detail fetch тільки для new/backfill items. | Sitemap filter тільки `/opp/`; не брати blog/service pages. | Deadline/status з detail HTML. | Sitemap доступний і дає багато opportunity URLs. |
+| `chas-zmin` | Зібрати 50-100 WP posts через WP REST або RSS fallback. | WP REST 1-2 pages, `per_page` до 50; RSS fallback 1 request. | Search/category/tag filters для `грант`, `конкурс`, `можливості`; не active-only. | WP date як `published_at_hint`; deadline з content/detail. | WP REST/RSS стабільні, search повертає grant posts. |
+| `grantsense` | Не запускати production backfill до підтвердження, що це opportunity source. Manual validation sample до 20 URLs. | 1 sitemap/list sample. | Відкидати service/marketing pages; брати тільки pages із конкретною grant opportunity. | Deadline/status тільки з detail HTML, якщо є. | Високий noise risk після Step 1. |
+| `eufundingportal-eu` | Зібрати 50-100 WP posts із funding/grant categories. | WP REST 1-2 pages; RSS fallback 1 request. | Category/tag filters для grants/funding programmes; позначати aggregator duplicate risk. | Deadline/status із WP content/detail, якщо доступні. | Корисний aggregator, але не official EU source. |
+| `fundsforngos` | Зібрати 50-100 posts тільки після strong filters. | WP REST 1-2 pages; не crawl whole archive. | Grant keywords + category/topic/country filters; бажано Ukraine/Europe/NGO focus, якщо доступно. | Deadline/status із content/detail. | Багато grant posts, але дуже широкий source і можливий noise/rate-limit. |
+| `opportunitydesk` | Зібрати 50 posts після strong filters. | WP REST 1 page або RSS fallback; pagination після validation. | Keywords `grant`, `funding`, `fellowship` тільки якщо релевантно; відкидати education/job noise. | Deadline/status із content/detail. | Opportunity source широкий, потрібне агресивне noise control без active-only. |
+| `grantforward` | Production backfill не запускати до detail access check. | Тільки manual validation sample до 10 public detail URLs, якщо знайдені. | Не обходити login/paywall; не scrape restricted results. | Немає надійного правила до access validation. | Високий risk account/institution restriction. |
+| `nipo` | Зібрати 50-100 WP posts, але позначати digest/noise risk. | WP REST 1-2 pages; RSS fallback 1 request. | Search/category filters `грант`, `конкурс`, `можливості`, `підтримка`; не брати загальні новини без opportunity. | WP date як `published_at_hint`; deadline з content/detail. | Потенційно корисне digest/news source, але не завжди direct grant pages. |
+| `hromady` | Зібрати 50-100 WP posts через WP REST/RSS. | WP REST 1-2 pages; RSS fallback 1 request. | Search/category filters для `грант`, `конкурс`, `підтримка громад`, `можливості`; не active-only. | Deadline/status із detail content. | Добрий кандидат для локальних українських opportunities. |
+
+### Правила Для Джерел Із Високим Noise
+
+Для `fundsforngos`, `opportunitydesk`, `grantsense`, `nipo` і частково `eufundingportal-eu` connector має записувати в `discovery_metadata`:
+
+```json
+{
+  "quality_level": "medium",
+  "quality_reasons": ["aggregator_or_broad_source"],
+  "requires_manual_review": true,
+  "manual_review_reason": "source can include non-grant or duplicate opportunities"
+}
+```
+
+Якщо item має сильні grant signals і direct detail page, `requires_manual_review` може бути `false`, але source-level noise risk все одно треба лишити в metadata.
+
+### Правила Для Deferred Sources І Deferred Validation
+
+Deferred source не вважається rejected.
+
+Для повністю deferred джерел:
+
+- не робимо production backfill;
+- не додаємо connector як implemented;
+- робимо тільки access/detail validation;
+- документуємо, що саме не підтверджено;
+- переносимо в implementation тільки після підтвердження стабільного list/detail доступу.
+
+Для `gurt` ситуація інша: connector уже існує і локально тестується, але production validation deferred через Cloudflare/human-check. Тому source не rejected і не removed, але його не можна вважати fully production validated.
+
+На поточному етапі це стосується:
+
+- `gurt` production validation, доки не знайдено дозволений спосіб пройти Cloudflare/human-check або альтернативний public endpoint;
+- `grantsense`, доки не підтверджено, що source дає конкретні grant opportunities;
+- `grantforward`, доки не підтверджено public detail access без login/paywall.
+
+### Acceptance Step 3
+
+Step 3 закритий, бо:
+
+- визначено rule для broad collection без active-only search filter;
+- визначено initial backfill і incremental rules;
+- визначено safe limits за типом доступу;
+- визначено grant-like filtering rules;
+- визначено source-specific initial collection rules для всіх джерел із `docs/initial_sources.md`;
+- визначено правила для high-noise і deferred sources;
+- зафіксовано, що actual connector implementation і real website validation залишаються в Step 4.
+
+## Реалізовано: Step 4.1 - Частина Хвилі 1
+
+Статус: готово для переходу до Step 4.2 після рішення скіпнути GURT production validation на цей момент.
+
+Дата реалізації: `2026-05-23`.
+
+Реалізовано три джерела з хвилі 1:
+
+- `chas-zmin`;
+- `eufundingportal-eu`;
+- `hromady`.
+
+Після уточнення користувача правильний GURT grants URL - `https://gurt.org.ua/news/grants/`, а не `https://grants.gurt.org.ua/`. Connector `gurt` уже існує з MVP і використовує правильну HTML list strategy, але production live validation не закрита, бо сайт повертає Cloudflare/human-check.
+
+Рішення від `2026-05-23`: GURT скіпається на цей момент і не блокує перехід до наступного step. Він лишається documented deferred/not production validated source.
+
+### Додані Конектори
+
+Додано shared WP REST implementation base:
+
+```text
+grant_tool/ingestion/connectors/wordpress.py
+```
+
+Це не один універсальний scraper для всіх сайтів. Це спільна реалізація тільки для однотипних WordPress REST джерел, поверх якої є окремі source-specific connector classes:
+
+- `ChasZminConnector`;
+- `EUFundingPortalEuConnector`;
+- `HromadyConnector`.
+
+Кожен із них використовує той самий погоджений контракт:
+
+```python
+discover(limit, mode) -> list[DiscoveredGrantItemDraft]
+fetch_detail(discovered_item) -> FetchedDetail
+normalize(discovered_item, detail) -> NormalizedGrantDraft
+```
+
+### Реалізовано Для `chas-zmin`
+
+Source:
+
+```text
+https://chaszmin.com.ua/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://chaszmin.com.ua/wp-json/wp/v2/posts`;
+- RSS fallback: `https://chaszmin.com.ua/feed/`;
+- search terms: `грант`, `конкурс`, `можливості`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- WP `content.rendered` використовується як detail payload;
+- documents, deadline, funding text і status витягуються deterministic helper-ами.
+
+Live validation:
+
+```text
+chas-zmin: grants=1 errors=0
+```
+
+### Реалізовано Для `eufundingportal-eu`
+
+Source:
+
+```text
+https://eufundingportal.eu/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://eufundingportal.eu/wp-json/wp/v2/posts`;
+- RSS fallback: `https://eufundingportal.eu/feed/`;
+- search terms: `grant`, `funding`, `programme`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- source позначається як aggregator із duplicate risk with official `eu-funding`;
+- `needs_manual_review = true` за замовчуванням для normalized grant.
+
+Live validation:
+
+```text
+eufundingportal-eu: grants=1 errors=0
+```
+
+### Реалізовано Для `hromady`
+
+Source:
+
+```text
+https://hromady.org/
+```
+
+Поточна стратегія:
+
+- WP REST primary: `https://hromady.org/wp-json/wp/v2/posts`;
+- RSS fallback: `https://hromady.org/feed/`;
+- search terms: `грант`, `конкурс`, `підтримка громад`, `можливості`;
+- `source_record_id = WP post id`;
+- `canonical_url = cleaned WP post link`;
+- джерело позначається як local/community development source.
+
+Live validation:
+
+```text
+hromady: grants=1 errors=0
+```
+
+### Source Seeding І Registry
+
+Оновлено source seed definitions:
+
+- додано `chas-zmin`;
+- додано `eufundingportal-eu`;
+- додано `hromady`;
+- `seed-sources` тепер створює або оновлює 7 configured sources: 4 MVP + 3 Step 4.1 sources.
+
+Оновлено connector registry:
+
+- `CONNECTOR_CLASSES["chas-zmin"]`;
+- `CONNECTOR_CLASSES["eufundingportal-eu"]`;
+- `CONNECTOR_CLASSES["hromady"]`.
+
+### Тести
+
+Додано fixtures:
+
+- `tests/fixtures/chas_zmin/posts.json`;
+- `tests/fixtures/eufundingportal_eu/posts.json`;
+- `tests/fixtures/hromady/posts.json`.
+
+Додано automated coverage:
+
+- connector parsing test для `chas-zmin`;
+- connector parsing test для `eufundingportal-eu`;
+- connector parsing test для `hromady`;
+- registry test для нових source slugs;
+- ingestion service test для WP REST source;
+- seed source test оновлено з 4 до 7 configured sources.
+
+Під час тестування знайдено і виправлено deterministic extraction bug: `extract_funding_text` міг брати перше число з дедлайну замість суми фінансування. Тепер helper спершу обирає match із currency/amount marker.
+
+Останній локальний результат:
+
+```text
+Ran 51 tests
+OK
+```
+
+Додаткові перевірки:
+
+```text
+python -m compileall grant_tool tests
+alembic heads -> 20260522_0004 (head)
+```
+
+### GURT Deferred
+
+`gurt` залишається незакритим саме як production validation, бо правильний URL блокується Cloudflare/human-check:
+
+```text
+https://gurt.org.ua/news/grants/ -> 403 text/html
+https://gurt.org.ua/news/grants/rss/ -> 403 text/html
+```
+
+Це не блокує Step 4.2, бо користувач погодив скіпнути GURT на цей момент.
+
+Майбутня дія має бути одна з двох:
+
+- знайти дозволений спосіб доступу до GURT: офіційний RSS/API, allowlist, погоджений user-agent або manual export;
+- якщо потрібен четвертий fully validated source у хвилі 1, погодити заміну слота, наприклад на `grant-market`.
+
+Не робимо автоматичний bypass Cloudflare/human-check як частину connector-а.
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- аудит усіх наданих сайтів;
-- реалізація нових source-specific connectors;
-- хвилі реалізації по 4 джерела;
+- реалізація решти source-specific connectors;
+- наступні хвилі реалізації по джерелах;
 - real website validation для всіх джерел;
-- логіка broad collection для релевантних grant-like opportunities без active-only search filter;
 - регулярне оновлення відомих open grant details після extraction;
 - discovery dashboard або CLI report;
 - фінальне закриття Stage Search.
