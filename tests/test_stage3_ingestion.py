@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from grant_tool.db import Base
-from grant_tool.db.models import AccessStrategy, DiscoveredGrantItem, Grant, JobStatus, Source
+from grant_tool.db.models import AccessStrategy, DiscoveredGrantItem, Grant, JobStatus, RawGrantSnapshot, Source
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.connectors import (
     ChasZminConnector,
@@ -36,8 +36,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class FakeHttpClient:
     def __init__(self, responses: dict[str, HttpResponse]) -> None:
         self.responses = responses
+        self.calls: list[tuple[str, str]] = []
 
     def get(self, url: str, *, params: dict[str, Any] | None = None) -> HttpResponse:
+        self.calls.append(("GET", url))
         if url not in self.responses:
             raise AssertionError(f"Unexpected GET URL: {url}")
         return self.responses[url]
@@ -51,12 +53,16 @@ class FakeHttpClient:
         files: Any | None = None,
         json: Any | None = None,
     ) -> HttpResponse:
+        self.calls.append(("POST", url))
         if url not in self.responses:
             raise AssertionError(f"Unexpected POST URL: {url}")
         return self.responses[url]
 
     def close(self) -> None:
         pass
+
+    def count_calls(self, method: str, url: str) -> int:
+        return self.calls.count((method, url))
 
 
 def text_fixture(path: str) -> str:
@@ -81,6 +87,161 @@ def html_response(url: str, path: str, content_type: str = "text/html") -> HttpR
         content_type=content_type,
         text=text_fixture(path),
     )
+
+
+def source_fixture_cases() -> list[dict[str, Any]]:
+    eu_api_url = "https://api.tech.ec.europa.eu/search-api/prod/rest/search"
+    prostir_feed_url = "https://www.prostir.ua/category/grants/feed/"
+    prostir_detail_url = "https://www.prostir.ua/grant/test-grant/"
+    diia_api_url = "https://api.business.diia.gov.ua/api/front"
+    diia_list_url = f"{diia_api_url}/finance"
+    diia_detail_url = f"{diia_api_url}/finance/service/grant_na_vlasnu_spravu"
+    gurt_list_url = "https://gurt.org.ua/news/grants/"
+    gurt_detail_url = "https://gurt.org.ua/news/grants/test-grant/"
+    chas_api_url = "https://chaszmin.com.ua/wp-json/wp/v2/posts"
+    eufundingportal_api_url = "https://eufundingportal.eu/wp-json/wp/v2/posts"
+    hromady_api_url = "https://hromady.org/wp-json/wp/v2/posts"
+    nipo_api_url = "https://nipo.gov.ua/wp-json/wp/v2/posts"
+    grant_market_sitemap_url = "https://grant.market/sitemap.xml"
+    grant_market_detail_url = "https://grant.market/opp/ebrd-consulting"
+    fundsforngos_api_url = "https://www2.fundsforngos.org/wp-json/wp/v2/posts"
+    opportunitydesk_api_url = "https://www.opportunitydesk.org/wp-json/wp/v2/posts"
+    return [
+        {
+            "slug": "eu-funding",
+            "access_strategy": AccessStrategy.API,
+            "base_url": "https://ec.europa.eu",
+            "api_url": eu_api_url,
+            "responses": {eu_api_url: json_response(eu_api_url, "eu_funding/search_response.json")},
+            "listing_url": eu_api_url,
+            "listing_method": "POST",
+            "detail_urls": [],
+        },
+        {
+            "slug": "prostir",
+            "access_strategy": AccessStrategy.RSS,
+            "base_url": "https://www.prostir.ua",
+            "feed_url": prostir_feed_url,
+            "responses": {
+                prostir_feed_url: html_response(prostir_feed_url, "prostir/feed.xml", "application/rss+xml"),
+                prostir_detail_url: html_response(prostir_detail_url, "prostir/detail.html"),
+            },
+            "listing_url": prostir_feed_url,
+            "listing_method": "GET",
+            "detail_urls": [prostir_detail_url],
+        },
+        {
+            "slug": "diia-business",
+            "access_strategy": AccessStrategy.API,
+            "base_url": "https://www.business.diia.gov.ua",
+            "api_url": diia_api_url,
+            "responses": {
+                diia_list_url: json_response(diia_list_url, "diia_business/finance_list.json"),
+                diia_detail_url: json_response(diia_detail_url, "diia_business/finance_detail.json"),
+            },
+            "listing_url": diia_list_url,
+            "listing_method": "GET",
+            "detail_urls": [diia_detail_url],
+        },
+        {
+            "slug": "gurt",
+            "access_strategy": AccessStrategy.HTML,
+            "base_url": "https://gurt.org.ua",
+            "list_url": gurt_list_url,
+            "responses": {
+                gurt_list_url: html_response(gurt_list_url, "gurt/list.html"),
+                gurt_detail_url: html_response(gurt_detail_url, "gurt/detail.html"),
+            },
+            "listing_url": gurt_list_url,
+            "listing_method": "GET",
+            "detail_urls": [gurt_detail_url],
+        },
+        {
+            "slug": "chas-zmin",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://chaszmin.com.ua",
+            "api_url": chas_api_url,
+            "feed_url": "https://chaszmin.com.ua/feed/",
+            "responses": {chas_api_url: json_response(chas_api_url, "chas_zmin/posts.json")},
+            "listing_url": chas_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "eufundingportal-eu",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://eufundingportal.eu",
+            "api_url": eufundingportal_api_url,
+            "feed_url": "https://eufundingportal.eu/feed/",
+            "responses": {
+                eufundingportal_api_url: json_response(eufundingportal_api_url, "eufundingportal_eu/posts.json")
+            },
+            "listing_url": eufundingportal_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "hromady",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://hromady.org",
+            "api_url": hromady_api_url,
+            "feed_url": "https://hromady.org/feed/",
+            "responses": {hromady_api_url: json_response(hromady_api_url, "hromady/posts.json")},
+            "listing_url": hromady_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "nipo",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://nipo.gov.ua",
+            "api_url": nipo_api_url,
+            "feed_url": "https://nipo.gov.ua/feed/",
+            "responses": {nipo_api_url: json_response(nipo_api_url, "nipo/posts.json")},
+            "listing_url": nipo_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "grant-market",
+            "access_strategy": AccessStrategy.SITEMAP_HTML,
+            "base_url": "https://grant.market",
+            "sitemap_url": grant_market_sitemap_url,
+            "responses": {
+                grant_market_sitemap_url: html_response(
+                    grant_market_sitemap_url,
+                    "grant_market/sitemap.xml",
+                    "application/xml",
+                ),
+                grant_market_detail_url: html_response(grant_market_detail_url, "grant_market/detail.html"),
+            },
+            "listing_url": grant_market_sitemap_url,
+            "listing_method": "GET",
+            "detail_urls": [grant_market_detail_url],
+        },
+        {
+            "slug": "fundsforngos",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://www2.fundsforngos.org",
+            "api_url": fundsforngos_api_url,
+            "feed_url": "https://www2.fundsforngos.org/feed/",
+            "responses": {fundsforngos_api_url: json_response(fundsforngos_api_url, "fundsforngos/posts.json")},
+            "listing_url": fundsforngos_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "opportunitydesk",
+            "access_strategy": AccessStrategy.WP_REST,
+            "base_url": "https://www.opportunitydesk.org",
+            "api_url": opportunitydesk_api_url,
+            "feed_url": "https://www.opportunitydesk.org/feed/",
+            "responses": {opportunitydesk_api_url: json_response(opportunitydesk_api_url, "opportunitydesk/posts.json")},
+            "listing_url": opportunitydesk_api_url,
+            "listing_method": "GET",
+            "detail_urls": [],
+        },
+    ]
 
 
 class Stage3IngestionTestCase(unittest.TestCase):
@@ -533,6 +694,52 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(summary.created_count, 1)
         self.assertEqual(grant_count, 1)
         self.assertEqual(discovered_count, 1)
+
+    def test_incremental_mode_skips_known_items_for_all_configured_connectors(self) -> None:
+        for case in source_fixture_cases():
+            with self.subTest(source=case["slug"]):
+                self.tearDown()
+                self.setUp()
+                source_kwargs = {
+                    key: case.get(key)
+                    for key in ("slug", "access_strategy", "base_url", "list_url", "api_url", "feed_url", "sitemap_url")
+                    if case.get(key) is not None
+                }
+                self.source(**source_kwargs)
+                fake_http = FakeHttpClient(case["responses"])
+                service = IngestionService(
+                    repository=self.repository,
+                    connector_classes={case["slug"]: CONNECTOR_CLASSES[case["slug"]]},
+                    http_client_factory=lambda _rate_limit, client=fake_http: client,
+                )
+
+                first = service.run_source(case["slug"], limit=1, mode="backfill")
+                second = service.run_source(case["slug"], limit=1, mode="incremental")
+                grant_count = self.session.scalar(select(func.count(Grant.id)))
+                snapshot_count = self.session.scalar(select(func.count(RawGrantSnapshot.id)))
+                discovered_count = self.session.scalar(select(func.count(DiscoveredGrantItem.id)))
+                discovered_item = self.session.scalar(select(DiscoveredGrantItem))
+
+                self.assertEqual(first.status, JobStatus.SUCCESS.value)
+                self.assertEqual(first.processed_count, 1)
+                self.assertEqual(first.created_count, 1)
+                self.assertEqual(second.status, JobStatus.SUCCESS.value)
+                self.assertEqual(second.processed_count, 1)
+                self.assertEqual(second.skipped_count, 1)
+                self.assertEqual(second.created_count, 0)
+                self.assertEqual(second.updated_count, 0)
+                self.assertEqual(grant_count, 1)
+                self.assertEqual(snapshot_count, 1)
+                self.assertEqual(discovered_count, 1)
+                self.assertEqual(discovered_item.detail_fetch_status, DetailFetchStatus.SKIPPED_KNOWN.value)
+                self.assertEqual(discovered_item.discovery_status, "known")
+                self.assertEqual(discovered_item.discovery_metadata["last_skip_reason"], "known_discovered_item")
+                self.assertEqual(second.job.job_metadata["discovered_count"], 1)
+                self.assertEqual(second.job.job_metadata["new_discovered_count"], 0)
+                self.assertEqual(second.job.job_metadata["known_discovered_count"], 1)
+                self.assertGreaterEqual(fake_http.count_calls(case["listing_method"], case["listing_url"]), 2)
+                for detail_url in case["detail_urls"]:
+                    self.assertEqual(fake_http.count_calls("GET", detail_url), 1)
 
 
 if __name__ == "__main__":

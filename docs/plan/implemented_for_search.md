@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, а також закрито Step 5 real website validation. Stage Search ще не завершений, бо попереду залишаються підтвердження incremental behavior для всіх джерел, refresh policy для відомих open grants і операційна видимість search.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, закрито Step 5 real website validation, а також підтверджено Step 6 incremental behavior для всіх configured connectors. Stage Search ще не завершений, бо попереду залишаються refresh policy для відомих open grants, операційна видимість search і фінальне закриття документації.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -1202,7 +1202,7 @@ seed-sources
   -> job counters
 ```
 
-`new_count` і `known_count` у цьому step не є фінальним incremental доказом, бо перевірка запускалась у clean in-memory DB. Повна перевірка known/new behavior залишається в Step 6.
+`new_count` і `known_count` у цьому step не є фінальним incremental доказом, бо перевірка запускалась у clean in-memory DB. Повна перевірка known/new behavior закрита окремо в Step 6.
 
 ### Live Connector Validation Matrix
 
@@ -1255,7 +1255,7 @@ seed-sources
 | `diia-business` | Source includes broader business finance/support programmes, not only pure grants. | Keep `support_type` and manual review/feature extraction checks. |
 | `gurt` | Cloudflare/human-check returns `403 Forbidden`. | Use only if official/public access path appears; no bypass. |
 | `eufundingportal-eu` | Aggregator source can duplicate official EU Funding opportunities. | Keep duplicate risk metadata and manual review. |
-| `hromady` | Sample can be digest/list content, not always direct grant detail. | Treat as ready with limitations; Step 6/7 can refine filtering or refresh policy. |
+| `hromady` | Sample can be digest/list content, not always direct grant detail. | Treat as ready with limitations; Step 7 can refine refresh policy if needed. |
 | `nipo` | News/digest source; sample can be webinar/digest content. | Keep `needs_manual_review`. |
 | `fundsforngos` | Broad international source with country/topic mismatch risk. | Keep `needs_manual_review` and strong filters. |
 | `opportunitydesk` | Broad opportunity source; sampled item was already `closed`, which is allowed because search does not use active-only filter. | Keep digest filter and manual review. |
@@ -1273,11 +1273,120 @@ Step 5 закритий, бо:
 - для кожного джерела зафіксовано decision;
 - список production limitations зафіксовано перед наступними steps.
 
+## Реалізовано: Step 6 - Інкрементальний Збір Тільки Нових Грантів
+
+Статус: виконано.
+
+Дата: `2026-05-24`.
+
+Мета Step 6 - підтвердити, що `incremental` режим не додає повторно ті самі гранти і не робить зайвий detail-fetch для вже відомих item, але все одно перечитує listing/search endpoint кожного запуску.
+
+### Поведінка, Яка Підтверджена
+
+Підтверджений flow:
+
+```text
+перший run: mode=backfill
+  -> listing/search endpoint читається
+  -> item створюється в discovered_grant_items
+  -> detail-fetch виконується
+  -> raw_grant_snapshots створюється
+  -> grants створюється
+
+другий run: mode=incremental
+  -> listing/search endpoint читається повторно
+  -> item знаходиться як known за stable identity
+  -> detail-fetch пропускається
+  -> raw_grant_snapshots не дублюється
+  -> grants не дублюється і не оновлюється
+```
+
+Важливе правило: пропускається не сторінка списку, а тільки вже відомий item. Якщо на тій самій listing page з'явиться новий grant із новою identity, він буде доданий як новий discovered item.
+
+### Що Саме Перевіряє Automated Test
+
+Додано тест:
+
+```text
+tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_skips_known_items_for_all_configured_connectors
+```
+
+Тест для кожного configured connector виконує:
+
+- перший запуск `IngestionService.run_source(..., mode="backfill")`;
+- другий запуск `IngestionService.run_source(..., mode="incremental")`;
+- перевірку, що `backfill` створив `created=1`;
+- перевірку, що `incremental` дав `processed=1`, `skipped=1`, `created=0`, `updated=0`;
+- перевірку, що в БД лишається тільки один `Grant`;
+- перевірку, що в БД лишається тільки один `RawGrantSnapshot`;
+- перевірку, що в БД лишається тільки один `DiscoveredGrantItem`;
+- перевірку, що `detail_fetch_status=skipped_known`;
+- перевірку, що `discovery_status=known`;
+- перевірку, що `discovery_metadata.last_skip_reason=known_discovered_item`;
+- перевірку job metadata: `discovered_count=1`, `new_discovered_count=0`, `known_discovered_count=1`;
+- перевірку, що listing/search endpoint викликається мінімум двічі;
+- перевірку, що detail endpoint для джерел із окремим detail-fetch викликається тільки один раз за два runs.
+
+### Покриття Джерел
+
+| Source slug | Strategy | Stable identity для known/new decision | Step 6 decision |
+|---|---|---|---|
+| `eu-funding` | `api` | API record id / identifier | `passed_local_incremental_test` |
+| `prostir` | `rss` | RSS GUID або canonical URL | `passed_local_incremental_test` |
+| `diia-business` | `api` | service id / slug | `passed_local_incremental_test` |
+| `gurt` | `html` | canonical detail URL | `passed_local_incremental_test_with_fixture` |
+| `chas-zmin` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `eufundingportal-eu` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `hromady` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `nipo` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `grant-market` | `sitemap_html` | canonical detail URL | `passed_local_incremental_test` |
+| `fundsforngos` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `opportunitydesk` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+
+`grantsense` і `grantforward` не входять у Step 6 connector test, бо вони не мають реалізованих connectors і вже мають documented deferred/restricted decision.
+
+### Команда Перевірки Step 6
+
+```bash
+poetry run python -m unittest tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_skips_known_items_for_all_configured_connectors
+```
+
+Результат:
+
+```text
+Ran 1 test
+OK
+```
+
+Повна регресійна перевірка після змін:
+
+```bash
+poetry run python -m unittest discover tests
+```
+
+Результат:
+
+```text
+Ran 57 tests
+OK
+```
+
+### Acceptance Step 6
+
+Step 6 закритий, бо:
+
+- incremental behavior підтверджено для всіх 11 configured connectors;
+- known item не створює дубль `grants`;
+- known item не створює дубль `raw_grant_snapshots`;
+- known item отримує `detail_fetch_status=skipped_known`;
+- listing/search endpoint перечитується повторно, тому нові item на старій сторінці можуть бути знайдені;
+- detail-fetch не виконується повторно для known item у звичайному `incremental`;
+- `grantsense` і `grantforward` залишаються поза тестом як джерела без connector через documented deferred/restricted decision.
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- підтвердження incremental behavior для всіх джерел;
 - регулярне оновлення відомих open grant details після extraction;
 - discovery dashboard або CLI report;
 - фінальне закриття Stage Search.
