@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -740,6 +741,99 @@ class Stage3IngestionTestCase(unittest.TestCase):
                 self.assertGreaterEqual(fake_http.count_calls(case["listing_method"], case["listing_url"]), 2)
                 for detail_url in case["detail_urls"]:
                     self.assertEqual(fake_http.count_calls("GET", detail_url), 1)
+
+    def test_incremental_mode_refreshes_known_open_items_when_due(self) -> None:
+        feed_url = "https://www.prostir.ua/category/grants/feed/"
+        detail_url = "https://www.prostir.ua/grant/test-grant/"
+        source = self.source(
+            slug="prostir",
+            access_strategy=AccessStrategy.RSS,
+            base_url="https://www.prostir.ua",
+            feed_url=feed_url,
+        )
+        fake_http = FakeHttpClient(
+            {
+                feed_url: html_response(feed_url, "prostir/feed.xml", "application/rss+xml"),
+                detail_url: html_response(detail_url, "prostir/detail.html"),
+            }
+        )
+        service = IngestionService(
+            repository=self.repository,
+            connector_classes={"prostir": CONNECTOR_CLASSES["prostir"]},
+            http_client_factory=lambda _rate_limit: fake_http,
+        )
+
+        first = service.run_source("prostir", limit=1, mode="backfill")
+        grant = self.session.scalar(select(Grant))
+        grant.status = "open"
+        grant.updated_at = datetime.now(UTC) - timedelta(days=8)
+        self.session.flush()
+
+        second = service.run_source("prostir", limit=1, mode="incremental")
+        snapshot_count = self.session.scalar(select(func.count(RawGrantSnapshot.id)))
+        discovered_item = self.session.scalar(select(DiscoveredGrantItem))
+
+        self.assertEqual(first.status, JobStatus.SUCCESS.value)
+        self.assertEqual(second.status, JobStatus.SUCCESS.value)
+        self.assertEqual(second.processed_count, 1)
+        self.assertEqual(second.updated_count, 1)
+        self.assertEqual(second.skipped_count, 0)
+        self.assertEqual(snapshot_count, 1)
+        self.assertEqual(discovered_item.detail_fetch_status, DetailFetchStatus.FETCHED.value)
+        self.assertEqual(discovered_item.discovery_metadata["last_refresh_reason"], "known_item_due_for_refresh")
+        self.assertEqual(second.job.job_metadata["refresh_due_count"], 1)
+        self.assertEqual(second.job.job_metadata["refreshed_known_count"], 1)
+        self.assertEqual(second.job.job_metadata["skipped_known_count"], 0)
+        self.assertEqual(second.job.job_metadata["refresh_policy"]["open_interval_days"], 7)
+        self.assertGreaterEqual(fake_http.count_calls("GET", feed_url), 2)
+        self.assertEqual(fake_http.count_calls("GET", detail_url), 2)
+
+    def test_incremental_mode_refreshes_due_item_not_present_in_current_listing(self) -> None:
+        feed_url = "https://www.prostir.ua/category/grants/feed/"
+        detail_url = "https://www.prostir.ua/grant/test-grant/"
+        self.source(
+            slug="prostir",
+            access_strategy=AccessStrategy.RSS,
+            base_url="https://www.prostir.ua",
+            feed_url=feed_url,
+        )
+        fake_http = FakeHttpClient(
+            {
+                feed_url: html_response(feed_url, "prostir/feed.xml", "application/rss+xml"),
+                detail_url: html_response(detail_url, "prostir/detail.html"),
+            }
+        )
+        service = IngestionService(
+            repository=self.repository,
+            connector_classes={"prostir": CONNECTOR_CLASSES["prostir"]},
+            http_client_factory=lambda _rate_limit: fake_http,
+        )
+
+        service.run_source("prostir", limit=1, mode="backfill")
+        grant = self.session.scalar(select(Grant))
+        grant.status = "open"
+        grant.updated_at = datetime.now(UTC) - timedelta(days=8)
+        self.session.flush()
+        fake_http.responses[feed_url] = HttpResponse(
+            url=feed_url,
+            status_code=200,
+            content_type="application/rss+xml",
+            text="<?xml version='1.0'?><rss><channel></channel></rss>",
+        )
+
+        second = service.run_source("prostir", limit=1, mode="incremental")
+        discovered_item = self.session.scalar(select(DiscoveredGrantItem))
+
+        self.assertEqual(second.status, JobStatus.SUCCESS.value)
+        self.assertEqual(second.processed_count, 1)
+        self.assertEqual(second.updated_count, 1)
+        self.assertEqual(second.job.job_metadata["discovered_count"], 0)
+        self.assertEqual(second.job.job_metadata["refresh_due_candidate_count"], 1)
+        self.assertEqual(second.job.job_metadata["refresh_due_count"], 1)
+        self.assertEqual(second.job.job_metadata["refreshed_known_count"], 1)
+        self.assertEqual(discovered_item.discovery_metadata["refresh_source"], "due_item_not_in_listing")
+        self.assertEqual(fake_http.count_calls("GET", feed_url), 2)
+        self.assertEqual(fake_http.count_calls("GET", detail_url), 2)
 
 
 if __name__ == "__main__":

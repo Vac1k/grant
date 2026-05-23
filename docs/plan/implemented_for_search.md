@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, закрито Step 5 real website validation, а також підтверджено Step 6 incremental behavior для всіх configured connectors. Stage Search ще не завершений, бо попереду залишаються refresh policy для відомих open grants, операційна видимість search, production backfill/quality gate на 10 grants для кожного implementable джерела і фінальне закриття документації.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, закрито Step 5 real website validation, підтверджено Step 6 incremental behavior для всіх configured connectors, реалізовано Step 7 refresh policy для відомих open/unknown grants, а також додано Step 8 CLI operational visibility. Stage Search ще не завершений, бо попереду залишаються production backfill/quality gate на 10 grants для кожного implementable джерела і фінальне закриття документації.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -1257,7 +1257,7 @@ seed-sources
 | `diia-business` | Source includes broader business finance/support programmes, not only pure grants. | Keep `support_type` and manual review/feature extraction checks. |
 | `gurt` | Cloudflare/human-check returns `403 Forbidden`. | Use only if official/public access path appears; no bypass. |
 | `eufundingportal-eu` | Aggregator source can duplicate official EU Funding opportunities. | Keep duplicate risk metadata and manual review. |
-| `hromady` | Sample can be digest/list content, not always direct grant detail. | Treat as ready with limitations; Step 7 can refine refresh policy if needed. |
+| `hromady` | Sample can be digest/list content, not always direct grant detail. | Treat as ready with limitations; quality gate can filter non-grant digest content. |
 | `nipo` | News/digest source; sample can be webinar/digest content. | Keep `needs_manual_review`. |
 | `fundsforngos` | Broad international source with country/topic mismatch risk. | Keep `needs_manual_review` and strong filters. |
 | `opportunitydesk` | Broad opportunity source; sampled item was already `closed`, which is allowed because search does not use active-only filter. | Keep digest filter and manual review. |
@@ -1385,11 +1385,347 @@ Step 6 закритий, бо:
 - detail-fetch не виконується повторно для known item у звичайному `incremental`;
 - `grantsense` і `grantforward` залишаються поза тестом як джерела без connector через documented deferred/restricted decision.
 
+## Реалізовано: Step 7 - Періодичне Оновлення Відомих Open Grants Після Extraction
+
+Статус: виконано.
+
+Дата: `2026-05-24`.
+
+Мета Step 7 - не ламати `incremental new-only` поведінку, але додати контрольований refresh для вже відомих grants, де після extraction може змінитись deadline, status або умови.
+
+### Refresh Policy
+
+Реалізоване правило:
+
+- `open` grant із `deadline_at` оновлюється, якщо `Grant.updated_at` старший за 7 днів;
+- `open` або `unknown` grant без `deadline_at` оновлюється, якщо `Grant.updated_at` старший за 14 днів;
+- `closed` grants не потрапляють у refresh query;
+- source може перевизначити interval через `source_metadata.refresh_open_interval_days`;
+- source може перевизначити interval для records без deadline через `source_metadata.refresh_no_deadline_interval_days`;
+- fallback `source_metadata.refresh_interval_days` може задати загальний open interval.
+
+### Реалізований Flow
+
+```text
+incremental run
+  -> connector.discover()
+  -> repository.list_discovered_items_due_for_refresh(source_id, policy)
+  -> upsert discovered item
+  -> якщо item new:
+       fetch_detail + normalize + save
+  -> якщо item known і не due:
+       detail_fetch_status = skipped_known
+       job.skipped_count += 1
+  -> якщо item known і due:
+       fetch_detail + normalize + save
+       detail_fetch_status = fetched
+       job.updated_count += 1
+  -> якщо due item не повернувся в поточному listing:
+       refresh виконується напряму через відомий detail/source URL
+```
+
+Важливо: listing/search endpoint все одно перечитується кожного incremental run. Refresh decision застосовується тільки після item-level identity match.
+
+### Repository Query
+
+Додано:
+
+```python
+GrantRepository.list_discovered_items_due_for_refresh(
+    source_id=...,
+    now=...,
+    limit=...,
+    open_interval_days=7,
+    no_deadline_interval_days=14,
+)
+```
+
+Query зв'язує `discovered_grant_items` із `grants` через stable identity:
+
+- `source_record_id`;
+- `canonical_url` -> `Grant.source_url`;
+- `source_url`.
+
+Це не потребує нової міграції, бо для v1 достатньо існуючих identity fields.
+
+### Job Metadata
+
+Ingestion job тепер записує:
+
+- `refresh_policy`;
+- `refresh_due_candidate_count`;
+- `refresh_due_count`;
+- `refreshed_known_count`;
+- `skipped_known_count`;
+
+Приклад:
+
+```json
+{
+  "refresh_policy": {
+    "open_interval_days": 7,
+    "no_deadline_interval_days": 14
+  },
+  "refresh_due_candidate_count": 1,
+  "refresh_due_count": 1,
+  "refreshed_known_count": 1,
+  "skipped_known_count": 0
+}
+```
+
+### Automated Tests
+
+Додано repository-level test:
+
+```text
+tests.test_stage2_repository.RepositoryTestCase.test_stage7_lists_known_items_due_for_refresh
+```
+
+Він перевіряє, що old `open` grant без deadline потрапляє в due refresh, а fresh grant не потрапляє.
+
+Додано ingestion-level test:
+
+```text
+tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_refreshes_known_open_items_when_due
+```
+
+Він перевіряє:
+
+- перший `backfill` створює grant;
+- old `open` grant у другому `incremental` проходить refresh;
+- detail URL викликається повторно;
+- `detail_fetch_status=fetched`;
+- `last_refresh_reason=known_item_due_for_refresh`;
+- job counters: `updated_count=1`, `skipped_count=0`;
+- job metadata: `refresh_due_count=1`, `refreshed_known_count=1`, `skipped_known_count=0`.
+
+Додано ingestion-level test для due item, який не повернувся в поточному listing:
+
+```text
+tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_refreshes_due_item_not_present_in_current_listing
+```
+
+Він перевіряє:
+
+- другий `incremental` може мати `discovered_count=0`;
+- due item усе одно проходить refresh через already known source/detail URL;
+- `refresh_source=due_item_not_in_listing`;
+- detail URL викликається повторно.
+
+Також повторно перевірено Step 6 behavior:
+
+```text
+tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_skips_known_items_for_all_configured_connectors
+```
+
+Це підтверджує, що normal known item без due refresh все ще пропускає detail-fetch.
+
+### Команда Перевірки Step 7
+
+```bash
+poetry run python -m unittest tests.test_stage2_repository.RepositoryTestCase.test_stage7_lists_known_items_due_for_refresh tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_refreshes_known_open_items_when_due tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_refreshes_due_item_not_present_in_current_listing tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_skips_known_items_for_all_configured_connectors
+```
+
+Результат:
+
+```text
+Ran 4 tests
+OK
+```
+
+Повна регресійна перевірка після змін:
+
+```bash
+poetry run python -m unittest discover tests
+```
+
+Результат:
+
+```text
+Ran 60 tests
+OK
+```
+
+### Acceptance Step 7
+
+Step 7 закритий, бо:
+
+- refresh policy визначена і реалізована;
+- repository має query для due refresh items;
+- ingestion використовує due refresh без зламу incremental new-only логіки;
+- closed grants не оновлюються звичайним refresh query;
+- job metadata показує refresh behavior;
+- додані automated tests для repository query і ingestion refresh;
+- існуючий Step 6 skip-known behavior лишається підтвердженим.
+
+## Реалізовано: Step 8 - Операційна Видимість Search
+
+Статус: виконано.
+
+Дата: `2026-05-24`.
+
+Мета Step 8 - додати швидкий спосіб бачити стан search/link extraction без ручного SQL: скільки item знайдено, скільки grants створено, де є failed detail, skipped known, manual review, refresh activity і останній ingestion job.
+
+### CLI Command
+
+Додано команду:
+
+```bash
+grant-tool search-report
+```
+
+Фільтр по одному source:
+
+```bash
+grant-tool search-report --source prostir
+```
+
+Команда читає aggregation із repository і друкує source-level operational table.
+
+### Поля Report-А
+
+Report показує:
+
+- `source`;
+- `enabled`;
+- `discovered`;
+- `grants`;
+- `new/known`;
+- `detail fetched/skipped/failed`;
+- `open/unknown/manual`;
+- `latest job`;
+- `refresh due/refreshed`;
+- `last seen`.
+
+Приклад формату:
+
+```text
+Search source report
+source | enabled | discovered | grants | new/known | detail fetched/skipped/failed | open/unknown/manual | latest job | refresh due/refreshed | last seen
+prostir | yes | 12 | 9 | 2/10 | 9/2/1 | 6/2/1 | success p=12 c=2 u=1 s=9 f=0 | 1/1 | 2026-05-24T12:00:00+00:00
+```
+
+### Repository Aggregation
+
+Додано:
+
+```python
+GrantRepository.search_source_report(source_slug=None)
+```
+
+Метод повертає `SearchSourceReportRow` для кожного source.
+
+Aggregation рахує:
+
+- total discovered items;
+- `discovery_status=new`;
+- `discovery_status=known`;
+- `discovery_status=failed`;
+- `detail_fetch_status=not_fetched`;
+- `detail_fetch_status=fetched`;
+- `detail_fetch_status=failed`;
+- `detail_fetch_status=skipped_known`;
+- total grants;
+- open grants;
+- unknown grants;
+- grants with `needs_manual_review=true`;
+- max `last_seen_at`;
+- latest ingestion job counters;
+- latest ingestion refresh counters із `job_metadata`.
+
+### Operator Workflow
+
+Після ingestion run оператор має виконати:
+
+```bash
+grant-tool search-report
+```
+
+Що перевіряти:
+
+- `discovered=0` для source, який мав би працювати, означає проблему з listing/API/search endpoint;
+- високий `detail failed` означає проблему з detail pages, selectors, rate limit або access;
+- високий `skipped_known` нормальний для stable incremental run;
+- `refresh due/refreshed` показує, чи Step 7 refresh реально працює;
+- `grants` має рости на backfill або коли з'являються нові grants;
+- `open/unknown/manual` допомагає знайти sources із слабкою нормалізацією або високим noise;
+- `last seen` показує, чи source реально перечитувався.
+
+Це не замінює Step 9 quality gate на 10 grants. Step 8 тільки дає видимість, щоб бачити, де саме ingestion/search має проблему.
+
+### Automated Tests
+
+Додано repository-level test:
+
+```text
+tests.test_stage2_repository.RepositoryTestCase.test_stage8_search_source_report_counts_operational_state
+```
+
+Він перевіряє:
+
+- discovered counters;
+- new/known counters;
+- fetched/skipped detail counters;
+- grants/open/unknown/manual counters;
+- latest ingestion job status і counters;
+- refresh counters із job metadata;
+- `last_seen_at`.
+
+Додано CLI formatting tests:
+
+```text
+tests.test_stage8_search_report.Stage8SearchReportTestCase
+```
+
+Вони перевіряють:
+
+- report header;
+- operational columns;
+- row format;
+- latest job counters;
+- refresh due/refreshed counters;
+- empty state.
+
+### Команда Перевірки Step 8
+
+```bash
+poetry run python -m unittest tests.test_stage2_repository.RepositoryTestCase.test_stage8_search_source_report_counts_operational_state tests.test_stage8_search_report
+```
+
+Результат:
+
+```text
+Ran 3 tests
+OK
+```
+
+Повна регресійна перевірка після змін:
+
+```bash
+poetry run python -m unittest discover tests
+```
+
+Результат:
+
+```text
+Ran 63 tests
+OK
+```
+
+### Acceptance Step 8
+
+Step 8 закритий, бо:
+
+- є CLI command для search operational visibility;
+- report показує source-level discovered/grants/status/detail/job/refresh counters;
+- є documented operator workflow;
+- є automated tests для repository aggregation;
+- є automated tests для CLI report format;
+- Step 9 quality gate лишається окремим і не вважається виконаним через наявність report-а.
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- регулярне оновлення відомих open grant details після extraction;
-- discovery dashboard або CLI report;
 - production backfill і quality gate: мінімум 10 quality-approved grants у `grants` для кожного implementable джерела, крім `gurt`;
 - фінальне закриття Stage Search.

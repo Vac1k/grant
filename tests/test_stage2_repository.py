@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import create_engine, func, select
@@ -145,6 +146,147 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertEqual(second_item.discovery_status, DiscoveryStatus.KNOWN.value)
         self.assertEqual(second_item.detail_fetch_status, DetailFetchStatus.SKIPPED_KNOWN.value)
         self.assertEqual(second_item.discovery_metadata["last_skip_reason"], "known_discovered_item")
+
+    def test_stage7_lists_known_items_due_for_refresh(self) -> None:
+        source = self.repository.upsert_source(
+            slug="test-source",
+            name="Test Source",
+            base_url="https://example.com",
+            access_strategy=AccessStrategy.API,
+            api_url="https://example.com/api",
+        )
+        due_draft = DiscoveredGrantItemDraft(
+            source_url="https://example.com/grants/due",
+            canonical_url="https://example.com/grants/due",
+            source_record_id="due",
+            title_hint="Due grant",
+        )
+        fresh_draft = DiscoveredGrantItemDraft(
+            source_url="https://example.com/grants/fresh",
+            canonical_url="https://example.com/grants/fresh",
+            source_record_id="fresh",
+            title_hint="Fresh grant",
+        )
+        due_item, _created = self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=due_draft,
+        )
+        self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=fresh_draft,
+        )
+        due_grant = self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="due",
+            source_url="https://example.com/grants/due",
+            title="Due grant",
+            status="open",
+        )
+        fresh_grant = self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="fresh",
+            source_url="https://example.com/grants/fresh",
+            title="Fresh grant",
+            status="open",
+        )
+        now = datetime.now(UTC)
+        due_grant.updated_at = now - timedelta(days=15)
+        fresh_grant.updated_at = now - timedelta(days=2)
+        self.session.flush()
+
+        due_items = self.repository.list_discovered_items_due_for_refresh(
+            source_id=source.id,
+            now=now,
+            open_interval_days=7,
+            no_deadline_interval_days=14,
+        )
+
+        self.assertEqual([item.id for item in due_items], [due_item.id])
+
+    def test_stage8_search_source_report_counts_operational_state(self) -> None:
+        source = self.repository.upsert_source(
+            slug="test-source",
+            name="Test Source",
+            base_url="https://example.com",
+            access_strategy=AccessStrategy.API,
+            api_url="https://example.com/api",
+        )
+        first_item, _created = self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=DiscoveredGrantItemDraft(
+                source_url="https://example.com/grants/1",
+                canonical_url="https://example.com/grants/1",
+                source_record_id="grant-1",
+                title_hint="Open AI grant",
+            ),
+        )
+        second_item, _created = self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=DiscoveredGrantItemDraft(
+                source_url="https://example.com/grants/2",
+                canonical_url="https://example.com/grants/2",
+                source_record_id="grant-2",
+                title_hint="Known grant",
+            ),
+        )
+        self.repository.upsert_discovered_item(
+            source_id=source.id,
+            source_slug=source.slug,
+            draft=DiscoveredGrantItemDraft(
+                source_url="https://example.com/grants/2",
+                canonical_url="https://example.com/grants/2",
+                source_record_id="grant-2",
+                title_hint="Known grant",
+            ),
+        )
+        self.repository.mark_discovered_detail_status(first_item, detail_fetch_status=DetailFetchStatus.FETCHED)
+        self.repository.mark_discovered_detail_status(second_item, detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN)
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="grant-1",
+            source_url="https://example.com/grants/1",
+            title="Open AI grant",
+            status="open",
+        )
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="grant-2",
+            source_url="https://example.com/grants/2",
+            title="Unknown grant",
+            status="unknown",
+            needs_manual_review=True,
+        )
+        job = self.repository.start_job(
+            job_type=JobType.INGESTION,
+            source_id=source.id,
+            job_metadata={"refresh_due_count": 1, "refreshed_known_count": 1},
+        )
+        self.repository.increment_job_counters(job, processed=2, created=1, updated=1, skipped=1)
+        self.repository.finish_job_success(job)
+
+        rows = self.repository.search_source_report(source_slug="test-source")
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.source_slug, "test-source")
+        self.assertEqual(row.discovered_total, 2)
+        self.assertEqual(row.discovery_new, 1)
+        self.assertEqual(row.discovery_known, 1)
+        self.assertEqual(row.detail_fetched, 1)
+        self.assertEqual(row.detail_skipped_known, 1)
+        self.assertEqual(row.grants_total, 2)
+        self.assertEqual(row.grants_open, 1)
+        self.assertEqual(row.grants_unknown, 1)
+        self.assertEqual(row.grants_manual_review, 1)
+        self.assertEqual(row.latest_job_status, JobStatus.SUCCESS.value)
+        self.assertEqual(row.latest_job_processed, 2)
+        self.assertEqual(row.latest_job_refresh_due, 1)
+        self.assertEqual(row.latest_job_refreshed_known, 1)
+        self.assertIsNotNone(row.last_seen_at)
 
     def test_stage25_job_lifecycle(self) -> None:
         source = self.repository.upsert_source(

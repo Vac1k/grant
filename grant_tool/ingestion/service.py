@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from grant_tool.config import get_settings
@@ -70,6 +71,9 @@ class IngestionService:
         discovered_count = 0
         new_discovered_count = 0
         known_discovered_count = 0
+        refresh_due_count = 0
+        refreshed_known_count = 0
+        skipped_known_count = 0
         settings = get_settings()
         if self.http_client_factory:
             http_client = self.http_client_factory(source.rate_limit_seconds)
@@ -92,6 +96,19 @@ class IngestionService:
                         source_url=source.list_url or source.feed_url or source.api_url or source.base_url,
                     )
                 )
+            refresh_policy = self._refresh_policy(source.source_metadata)
+            due_refresh_items = []
+            due_refresh_item_ids = set()
+            if discovery_mode == DiscoveryMode.INCREMENTAL:
+                due_refresh_items = self.repository.list_discovered_items_due_for_refresh(
+                    source_id=source.id,
+                    now=datetime.now(UTC),
+                    limit=max(limit, len(discovered_items), 1),
+                    open_interval_days=refresh_policy["open_interval_days"],
+                    no_deadline_interval_days=refresh_policy["no_deadline_interval_days"],
+                )
+                due_refresh_item_ids = {item.id for item in due_refresh_items}
+            processed_discovered_item_ids = set()
 
             for discovered_draft in discovered_items:
                 discovered_count += 1
@@ -100,27 +117,41 @@ class IngestionService:
                     source_slug=source.slug,
                     draft=discovered_draft,
                 )
+                processed_discovered_item_ids.add(discovered_item.id)
                 if was_discovered_created:
                     new_discovered_count += 1
                 else:
                     known_discovered_count += 1
 
                 if discovery_mode == DiscoveryMode.INCREMENTAL and not was_discovered_created:
-                    self.repository.mark_discovered_detail_status(
-                        discovered_item,
-                        detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN,
-                        metadata={"last_skip_reason": "known_discovered_item"},
-                    )
-                    self.repository.increment_job_counters(job, processed=1, skipped=1)
-                    continue
+                    if discovered_item.id in due_refresh_item_ids:
+                        refresh_due_count += 1
+                    else:
+                        skipped_known_count += 1
+                        self.repository.mark_discovered_detail_status(
+                            discovered_item,
+                            detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN,
+                            metadata={"last_skip_reason": "known_discovered_item"},
+                        )
+                        self.repository.increment_job_counters(job, processed=1, skipped=1)
+                        continue
 
                 try:
                     fetched_grant = self._fetch_and_normalize(connector, discovered_draft)
                     was_created = self._save_fetched_grant(fetched_grant, source_id=source.id, source_slug=source.slug)
+                    if discovery_mode == DiscoveryMode.INCREMENTAL and not was_discovered_created:
+                        refreshed_known_count += 1
                     self.repository.mark_discovered_detail_status(
                         discovered_item,
                         detail_fetch_status=DetailFetchStatus.FETCHED,
-                        metadata={"latest_grant_source_url": fetched_grant.normalized.source_url},
+                        metadata={
+                            "latest_grant_source_url": fetched_grant.normalized.source_url,
+                            **(
+                                {"last_refresh_reason": "known_item_due_for_refresh"}
+                                if discovery_mode == DiscoveryMode.INCREMENTAL and not was_discovered_created
+                                else {}
+                            ),
+                        },
                     )
                     if was_created:
                         self.repository.increment_job_counters(job, processed=1, created=1)
@@ -141,6 +172,48 @@ class IngestionService:
                     )
                     self.repository.increment_job_counters(job, processed=1, failed=1)
 
+            if discovery_mode == DiscoveryMode.INCREMENTAL:
+                for due_item in due_refresh_items:
+                    if due_item.id in processed_discovered_item_ids:
+                        continue
+                    refresh_due_count += 1
+                    due_draft = self._draft_from_discovered_item(due_item)
+                    try:
+                        fetched_grant = self._fetch_and_normalize(connector, due_draft)
+                        was_created = self._save_fetched_grant(
+                            fetched_grant,
+                            source_id=source.id,
+                            source_slug=source.slug,
+                        )
+                        refreshed_known_count += 1
+                        self.repository.mark_discovered_detail_status(
+                            due_item,
+                            detail_fetch_status=DetailFetchStatus.FETCHED,
+                            metadata={
+                                "latest_grant_source_url": fetched_grant.normalized.source_url,
+                                "last_refresh_reason": "known_item_due_for_refresh",
+                                "refresh_source": "due_item_not_in_listing",
+                            },
+                        )
+                        if was_created:
+                            self.repository.increment_job_counters(job, processed=1, created=1)
+                        else:
+                            self.repository.increment_job_counters(job, processed=1, updated=1)
+                    except Exception as exc:
+                        errors.append(
+                            ConnectorError(
+                                message=str(exc),
+                                source_url=due_draft.source_url,
+                                stage="refresh_due_fetch_detail_normalize_save",
+                            )
+                        )
+                        self.repository.mark_discovered_detail_status(
+                            due_item,
+                            detail_fetch_status=DetailFetchStatus.FAILED,
+                            metadata={"last_detail_error": str(exc)},
+                        )
+                        self.repository.increment_job_counters(job, processed=1, failed=1)
+
             metadata: dict[str, Any] = {
                 "source_slug": source.slug,
                 "limit": limit,
@@ -148,6 +221,11 @@ class IngestionService:
                 "discovered_count": discovered_count,
                 "new_discovered_count": new_discovered_count,
                 "known_discovered_count": known_discovered_count,
+                "skipped_known_count": skipped_known_count,
+                "refresh_due_count": refresh_due_count,
+                "refresh_due_candidate_count": len(due_refresh_items),
+                "refreshed_known_count": refreshed_known_count,
+                "refresh_policy": refresh_policy,
                 "connector_error_count": len(errors),
                 "connector_errors": [self._error_to_dict(error) for error in errors[:20]],
             }
@@ -221,6 +299,32 @@ class IngestionService:
             **normalized.to_grant_fields(),
         )
         return existing is None
+
+    @staticmethod
+    def _refresh_policy(source_metadata: dict[str, Any] | None) -> dict[str, int]:
+        metadata = source_metadata or {}
+        open_interval = metadata.get("refresh_open_interval_days") or metadata.get("refresh_interval_days") or 7
+        no_deadline_interval = metadata.get("refresh_no_deadline_interval_days") or 14
+        return {
+            "open_interval_days": int(open_interval),
+            "no_deadline_interval_days": int(no_deadline_interval),
+        }
+
+    @staticmethod
+    def _draft_from_discovered_item(item: Any) -> DiscoveredGrantItemDraft:
+        return DiscoveredGrantItemDraft(
+            source_url=item.source_url,
+            canonical_url=item.canonical_url,
+            source_record_id=item.source_record_id,
+            title_hint=item.title_hint,
+            summary_hint=item.summary_hint,
+            published_at_hint=item.published_at_hint,
+            deadline_hint=item.deadline_hint,
+            listing_url=item.listing_url,
+            listing_position=item.listing_position,
+            content_hash=item.content_hash,
+            discovery_metadata=item.discovery_metadata or {},
+        )
 
     @staticmethod
     def _error_to_dict(error: ConnectorError) -> dict[str, Any]:

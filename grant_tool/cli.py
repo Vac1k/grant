@@ -6,7 +6,7 @@ from pathlib import Path
 
 from grant_tool.client_import import ImportResult, import_application_history, import_client_profiles
 from grant_tool.config import get_settings
-from grant_tool.db.repositories import GrantRepository
+from grant_tool.db.repositories import GrantRepository, SearchSourceReportRow
 from grant_tool.db.session import SessionLocal
 from grant_tool.embeddings import EmbeddingService, EmbeddingTarget
 from grant_tool.explanations import MatchExplanationService
@@ -82,6 +82,51 @@ def _cmd_jobs_show(args: argparse.Namespace) -> None:
         print(f"failed_count: {job.failed_count}")
         print(f"error_message: {job.error_message}")
         print(f"job_metadata: {job.job_metadata}")
+
+
+def _format_search_report(rows: list[SearchSourceReportRow]) -> list[str]:
+    if not rows:
+        return ["No sources found"]
+
+    lines = [
+        "Search source report",
+        (
+            "source | enabled | discovered | grants | new/known | detail fetched/skipped/failed | "
+            "open/unknown/manual | latest job | refresh due/refreshed | last seen"
+        ),
+        "-" * 156,
+    ]
+    for row in rows:
+        latest_job = row.latest_job_status or "-"
+        if row.latest_job_status:
+            latest_job = (
+                f"{row.latest_job_status} "
+                f"p={row.latest_job_processed} c={row.latest_job_created} "
+                f"u={row.latest_job_updated} s={row.latest_job_skipped} f={row.latest_job_failed}"
+            )
+        last_seen = row.last_seen_at.isoformat() if row.last_seen_at else "-"
+        lines.append(
+            f"{row.source_slug} | "
+            f"{'yes' if row.enabled else 'no'} | "
+            f"{row.discovered_total} | "
+            f"{row.grants_total} | "
+            f"{row.discovery_new}/{row.discovery_known} | "
+            f"{row.detail_fetched}/{row.detail_skipped_known}/{row.detail_failed} | "
+            f"{row.grants_open}/{row.grants_unknown}/{row.grants_manual_review} | "
+            f"{latest_job} | "
+            f"{row.latest_job_refresh_due}/{row.latest_job_refreshed_known} | "
+            f"{last_seen}"
+        )
+    return lines
+
+
+def _cmd_search_report(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        rows = repository.search_source_report(source_slug=args.source)
+
+    for line in _format_search_report(rows):
+        print(line)
 
 
 def _print_import_result(label: str, result: ImportResult) -> None:
@@ -249,6 +294,10 @@ def _build_parser() -> argparse.ArgumentParser:
     jobs_show = job_subparsers.add_parser("show", help="Show one job")
     jobs_show.add_argument("job_id")
     jobs_show.set_defaults(func=_cmd_jobs_show)
+
+    search_report = subparsers.add_parser("search-report", help="Show operational status for search/link extraction")
+    search_report.add_argument("--source", default=None, help="Optional source slug")
+    search_report.set_defaults(func=_cmd_search_report)
 
     import_clients = subparsers.add_parser("import-clients", help="Import client profiles from CSV")
     import_clients.add_argument("--file", type=Path, default=DEFAULT_CLIENTS_FILE)

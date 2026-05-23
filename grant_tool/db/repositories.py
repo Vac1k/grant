@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from grant_tool.db.models import (
@@ -38,6 +39,33 @@ def _merge_metadata(
     extra: dict[str, Any] | None,
 ) -> dict[str, Any]:
     return {**(current or {}), **(extra or {})}
+
+
+@dataclass(slots=True)
+class SearchSourceReportRow:
+    source_slug: str
+    enabled: bool
+    discovered_total: int
+    discovery_new: int
+    discovery_known: int
+    discovery_failed: int
+    detail_not_fetched: int
+    detail_fetched: int
+    detail_failed: int
+    detail_skipped_known: int
+    grants_total: int
+    grants_open: int
+    grants_unknown: int
+    grants_manual_review: int
+    last_seen_at: datetime | None
+    latest_job_status: str | None
+    latest_job_processed: int
+    latest_job_created: int
+    latest_job_updated: int
+    latest_job_skipped: int
+    latest_job_failed: int
+    latest_job_refresh_due: int
+    latest_job_refreshed_known: int
 
 
 class GrantRepository:
@@ -354,6 +382,151 @@ class GrantRepository:
             item.discovery_metadata = _merge_metadata(item.discovery_metadata, metadata)
         self.session.flush()
         return item
+
+    def get_grant_for_discovered_item(self, item: DiscoveredGrantItem) -> Grant | None:
+        identity_conditions = []
+        if item.source_record_id:
+            identity_conditions.append(Grant.source_record_id == item.source_record_id)
+        if item.canonical_url:
+            identity_conditions.append(Grant.source_url == item.canonical_url)
+        identity_conditions.append(Grant.source_url == item.source_url)
+
+        return self.session.scalar(
+            select(Grant)
+            .where(
+                Grant.source_id == item.source_id,
+                or_(*identity_conditions),
+            )
+            .order_by(Grant.updated_at.desc())
+            .limit(1)
+        )
+
+    def list_discovered_items_due_for_refresh(
+        self,
+        *,
+        source_id: uuid.UUID,
+        now: datetime | None = None,
+        limit: int = 100,
+        open_interval_days: int = 7,
+        no_deadline_interval_days: int = 14,
+    ) -> list[DiscoveredGrantItem]:
+        now = now or datetime.now(UTC)
+        open_cutoff = now - timedelta(days=open_interval_days)
+        no_deadline_cutoff = now - timedelta(days=no_deadline_interval_days)
+        identity_match = or_(
+            and_(
+                DiscoveredGrantItem.source_record_id.is_not(None),
+                Grant.source_record_id == DiscoveredGrantItem.source_record_id,
+            ),
+            and_(
+                DiscoveredGrantItem.canonical_url.is_not(None),
+                Grant.source_url == DiscoveredGrantItem.canonical_url,
+            ),
+            Grant.source_url == DiscoveredGrantItem.source_url,
+        )
+        due_status = or_(
+            and_(
+                Grant.status == "open",
+                Grant.deadline_at.is_not(None),
+                Grant.updated_at <= open_cutoff,
+            ),
+            and_(
+                Grant.status.in_(("open", "unknown")),
+                Grant.deadline_at.is_(None),
+                Grant.updated_at <= no_deadline_cutoff,
+            ),
+        )
+
+        query = (
+            select(DiscoveredGrantItem)
+            .join(Grant, and_(Grant.source_id == DiscoveredGrantItem.source_id, identity_match))
+            .where(
+                DiscoveredGrantItem.source_id == source_id,
+                due_status,
+            )
+            .order_by(Grant.updated_at.asc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(query))
+
+    def search_source_report(self, *, source_slug: str | None = None) -> list[SearchSourceReportRow]:
+        sources_query = select(Source).order_by(Source.slug)
+        if source_slug is not None:
+            sources_query = sources_query.where(Source.slug == source_slug)
+
+        rows: list[SearchSourceReportRow] = []
+        for source in self.session.scalars(sources_query):
+            latest_job = self.session.scalar(
+                select(JobRun)
+                .where(
+                    JobRun.source_id == source.id,
+                    JobRun.job_type == JobType.INGESTION.value,
+                )
+                .order_by(JobRun.started_at.desc())
+                .limit(1)
+            )
+            latest_metadata = latest_job.job_metadata if latest_job is not None else {}
+            rows.append(
+                SearchSourceReportRow(
+                    source_slug=source.slug,
+                    enabled=source.enabled,
+                    discovered_total=self._count_discovered(source.id),
+                    discovery_new=self._count_discovered(source.id, discovery_status=DiscoveryStatus.NEW.value),
+                    discovery_known=self._count_discovered(source.id, discovery_status=DiscoveryStatus.KNOWN.value),
+                    discovery_failed=self._count_discovered(source.id, discovery_status=DiscoveryStatus.FAILED.value),
+                    detail_not_fetched=self._count_discovered(source.id, detail_fetch_status=DetailFetchStatus.NOT_FETCHED.value),
+                    detail_fetched=self._count_discovered(source.id, detail_fetch_status=DetailFetchStatus.FETCHED.value),
+                    detail_failed=self._count_discovered(source.id, detail_fetch_status=DetailFetchStatus.FAILED.value),
+                    detail_skipped_known=self._count_discovered(
+                        source.id,
+                        detail_fetch_status=DetailFetchStatus.SKIPPED_KNOWN.value,
+                    ),
+                    grants_total=self._count_grants(source.id),
+                    grants_open=self._count_grants(source.id, status="open"),
+                    grants_unknown=self._count_grants(source.id, status="unknown"),
+                    grants_manual_review=self._count_grants(source.id, needs_manual_review=True),
+                    last_seen_at=self.session.scalar(
+                        select(func.max(DiscoveredGrantItem.last_seen_at)).where(DiscoveredGrantItem.source_id == source.id)
+                    ),
+                    latest_job_status=latest_job.status if latest_job is not None else None,
+                    latest_job_processed=latest_job.processed_count if latest_job is not None else 0,
+                    latest_job_created=latest_job.created_count if latest_job is not None else 0,
+                    latest_job_updated=latest_job.updated_count if latest_job is not None else 0,
+                    latest_job_skipped=latest_job.skipped_count if latest_job is not None else 0,
+                    latest_job_failed=latest_job.failed_count if latest_job is not None else 0,
+                    latest_job_refresh_due=int(latest_metadata.get("refresh_due_count") or 0),
+                    latest_job_refreshed_known=int(latest_metadata.get("refreshed_known_count") or 0),
+                )
+            )
+        return rows
+
+    def _count_discovered(
+        self,
+        source_id: uuid.UUID,
+        *,
+        discovery_status: str | None = None,
+        detail_fetch_status: str | None = None,
+    ) -> int:
+        query = select(func.count(DiscoveredGrantItem.id)).where(DiscoveredGrantItem.source_id == source_id)
+        if discovery_status is not None:
+            query = query.where(DiscoveredGrantItem.discovery_status == discovery_status)
+        if detail_fetch_status is not None:
+            query = query.where(DiscoveredGrantItem.detail_fetch_status == detail_fetch_status)
+        return int(self.session.scalar(query) or 0)
+
+    def _count_grants(
+        self,
+        source_id: uuid.UUID,
+        *,
+        status: str | None = None,
+        needs_manual_review: bool | None = None,
+    ) -> int:
+        query = select(func.count(Grant.id)).where(Grant.source_id == source_id)
+        if status is not None:
+            query = query.where(Grant.status == status)
+        if needs_manual_review is not None:
+            query = query.where(Grant.needs_manual_review.is_(needs_manual_review))
+        return int(self.session.scalar(query) or 0)
 
     def upsert_grant(
         self,
