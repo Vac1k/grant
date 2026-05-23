@@ -136,7 +136,17 @@ WAVE2_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
             "priority": 8,
             "wave": "4.2",
             "country_focus": ["Ukraine"],
-            "wp_search_terms": ["грант", "конкурс", "можливості", "підтримка"],
+            "wp_search_terms": [
+                "грант",
+                "конкурс",
+                "можливості",
+                "підтримка",
+                "SME Fund",
+                "премія",
+                "відбір",
+                "фінансування",
+                "відшкодування",
+            ],
             "digest_or_news_source": True,
         },
     },
@@ -199,6 +209,21 @@ WAVE3_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
 SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
     MVP_SOURCE_DEFINITIONS + WAVE1_SOURCE_DEFINITIONS + WAVE2_SOURCE_DEFINITIONS + WAVE3_SOURCE_DEFINITIONS
 )
+
+QUALITY_GATE_REQUIRED_SOURCE_SLUGS: tuple[str, ...] = (
+    "eu-funding",
+    "prostir",
+    "diia-business",
+    "chas-zmin",
+    "eufundingportal-eu",
+    "hromady",
+    "nipo",
+    "grant-market",
+    "fundsforngos",
+    "opportunitydesk",
+)
+
+QUALITY_GATE_EXCLUDED_SOURCE_SLUGS: tuple[str, ...] = ("gurt",)
 
 
 def seed_mvp_sources(repository: GrantRepository) -> tuple[JobRun, list[Source]]:

@@ -15,7 +15,7 @@
 
 Великий Stage Search ще не завершений.
 
-Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, закрито Step 5 real website validation, підтверджено Step 6 incremental behavior для всіх configured connectors, реалізовано Step 7 refresh policy для відомих open/unknown grants, а також додано Step 8 CLI operational visibility. Stage Search ще не завершений, бо попереду залишаються production backfill/quality gate на 10 grants для кожного implementable джерела і фінальне закриття документації.
+Причина: зараз реалізована базова інфраструктура search/link extraction, адаптація 4 MVP-джерел, виконаний аудит усіх наданих джерел, уточнений контракт standardized initial table, зафіксовані правила початкового наповнення, реалізовано Step 4.1, Step 4.2 і Step 4.3 для нових джерел, закрито Step 5 real website validation, підтверджено Step 6 incremental behavior для всіх configured connectors, реалізовано Step 7 refresh policy для відомих open/unknown grants, додано Step 8 CLI operational visibility, а також закрито Step 9 production backfill/quality gate на 10 grants для кожного implementable джерела, крім `gurt`. Stage Search ще не завершений, бо попереду залишається фінальна документація і формальне закриття Stage Search.
 
 Stage Search можна буде вважати завершеним тільки тоді, коли будуть виконані всі вимоги:
 
@@ -1253,7 +1253,7 @@ seed-sources
 
 | Source slug | Limitation | Required follow-up |
 |---|---|---|
-| `eu-funding` | Live API returned raw status-like value `310945031` as normalized status. | Normalize EU status codes/labels in a later fix or Step 9 cleanup. |
+| `eu-funding` | Live API returned raw status-like value `310945031` as normalized status. | Normalize EU status codes/labels in a later fix or Step 10 cleanup. |
 | `diia-business` | Source includes broader business finance/support programmes, not only pure grants. | Keep `support_type` and manual review/feature extraction checks. |
 | `gurt` | Cloudflare/human-check returns `403 Forbidden`. | Use only if official/public access path appears; no bypass. |
 | `eufundingportal-eu` | Aggregator source can duplicate official EU Funding opportunities. | Keep duplicate risk metadata and manual review. |
@@ -1723,9 +1723,204 @@ Step 8 закритий, бо:
 - є automated tests для CLI report format;
 - Step 9 quality gate лишається окремим і не вважається виконаним через наявність report-а.
 
+## Реалізовано: Step 9 - Production Backfill І Quality Gate На 10 Grants Для Кожного Джерела
+
+Статус: виконано.
+
+Дата: `2026-05-24`.
+
+Мета Step 9 - довести, що Stage Search не просто має connectors і live sample, а реально додає мінімум 10 якісних grant-like records для кожного implementable джерела. Виняток: `gurt`, бо правильний URL блокується Cloudflare/human-check і bypass не використовується.
+
+### Quality Gate Command
+
+Додано команду:
+
+```bash
+grant-tool quality-gate
+```
+
+Команда:
+
+- рахує quality-approved grants по required sources;
+- виключає `gurt` як documented Cloudflare exception;
+- завершується з non-zero exit, якщо хоча б одне required джерело має менше 10 quality-approved grants;
+- має режим report-only:
+
+```bash
+grant-tool quality-gate --no-fail
+```
+
+### Quality-Approved Rules
+
+Grant рахується quality-approved, якщо:
+
+- має нормальний `title`;
+- має HTTP `source_url`;
+- не є очевидним generic/noise title;
+- не є digest/news/webinar/presentation item;
+- має прямий grant-like signal у title або summary;
+- має structured signal: deadline, funding, funder, application URL, documents або taxonomy fields.
+
+Manual-review flag сам по собі не блокує record, бо broad джерела на кшталт `fundsforngos`, `opportunitydesk` і `nipo` очікувано потребують review. Але record усе одно має пройти grant-like signal check.
+
+### NIPO Search Terms Enhancement
+
+Під час live Step 9 validation NIPO спочатку заблокував gate:
+
+```text
+nipo -> 9/10 quality-approved після limit=200
+```
+
+Проблема була не в обсязі crawl, а в source strategy: базові search terms повертали забагато news/digest content і не добирали достатньо grant/award/support opportunities.
+
+Оновлено `source_metadata.wp_search_terms` для `nipo`:
+
+```text
+грант
+конкурс
+можливості
+підтримка
+SME Fund
+премія
+відбір
+фінансування
+відшкодування
+```
+
+Після `seed-sources` і повторного `nipo` backfill gate пройшов.
+
+### Live Backfill Commands
+
+Виконано production-oriented backfill:
+
+```bash
+docker compose up -d --build
+docker compose exec app grant-tool ingest --source eu-funding --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source prostir --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source diia-business --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source chas-zmin --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source eufundingportal-eu --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source hromady --limit 50 --mode backfill
+docker compose exec app grant-tool ingest --source nipo --limit 200 --mode backfill
+docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode backfill
+docker compose exec app grant-tool quality-gate
+```
+
+`gurt` не запускали як required source для gate, бо live validation раніше підтвердила Cloudflare/human-check.
+
+### Live Backfill Results
+
+| Source | Limit | Job status | Processed | Created | Updated | Failed |
+|---|---:|---|---:|---:|---:|---:|
+| `eu-funding` | 20 | `success` | 20 | 0 | 20 | 0 |
+| `prostir` | 20 | `success` | 12 | 7 | 5 | 0 |
+| `diia-business` | 20 | `success` | 20 | 0 | 20 | 0 |
+| `chas-zmin` | 20 | `success` | 20 | 20 | 0 | 0 |
+| `eufundingportal-eu` | 20 | `success` | 20 | 20 | 0 | 0 |
+| `hromady` | 50 | `success` | 50 | 30 | 20 | 0 |
+| `nipo` | 200 | `success` | 200 | 42 | 158 | 0 |
+| `grant-market` | 20 | `success` | 20 | 20 | 0 | 0 |
+| `fundsforngos` | 20 | `success` | 20 | 20 | 0 | 0 |
+| `opportunitydesk` | 20 | `success` | 20 | 20 | 0 | 0 |
+
+### Final Quality Gate Result
+
+```text
+Search quality gate: passed (10/10 required sources passed)
+```
+
+| Source | Quality-approved / Required | Total grants | Rejected/noise | Decision |
+|---|---:|---:|---:|---|
+| `chas-zmin` | 20 / 10 | 20 | 0 | `passed` |
+| `diia-business` | 20 / 10 | 20 | 0 | `passed` |
+| `eu-funding` | 20 / 10 | 20 | 0 | `passed` |
+| `eufundingportal-eu` | 20 / 10 | 20 | 0 | `passed` |
+| `fundsforngos` | 19 / 10 | 20 | 1 | `passed` |
+| `grant-market` | 20 / 10 | 20 | 0 | `passed` |
+| `hromady` | 10 / 10 | 50 | 40 | `passed_with_high_noise` |
+| `nipo` | 17 / 10 | 200 | 183 | `passed_with_high_noise` |
+| `opportunitydesk` | 20 / 10 | 20 | 0 | `passed` |
+| `prostir` | 12 / 10 | 19 | 7 | `passed` |
+| `gurt` | 0 / 10 | 0 | 0 | `excluded_cloudflare` |
+
+### Operational Notes
+
+- `hromady` і `nipo` проходять gate, але мають високий noise ratio. Це означає, що вони придатні для Stage Search тільки з quality gate/manual review, а не як чисті direct-grant джерела.
+- `nipo` потребував `limit=200`, бо якісні grant-like records розчинені серед великої кількості news/digest content.
+- `prostir` дав 19 total grants і 12 quality-approved; це достатньо для gate, але source не завжди повертає рівно requested `limit`, бо RSS feed має фактичний доступний обсяг.
+- `gurt` залишається documented exception через Cloudflare/human-check без bypass.
+
+### Automated Tests
+
+Додано repository-level test:
+
+```text
+tests.test_stage2_repository.RepositoryTestCase.test_stage9_quality_gate_counts_only_grant_like_records
+```
+
+Він перевіряє, що:
+
+- quality-like grants рахуються;
+- obvious noise record не рахується;
+- manual-review record може рахуватись, якщо має grant-like signal.
+
+Додано CLI formatting test:
+
+```text
+tests.test_stage8_search_report.Stage8SearchReportTestCase.test_stage9_cli_quality_gate_report_marks_blocked_sources
+```
+
+Він перевіряє:
+
+- passed/blocked/excluded statuses;
+- quality/required counts;
+- sample titles;
+- summary line.
+
+### Команди Перевірки Step 9
+
+```bash
+poetry run python -m unittest tests.test_stage2_repository.RepositoryTestCase.test_stage9_quality_gate_counts_only_grant_like_records tests.test_stage8_search_report.Stage8SearchReportTestCase.test_stage9_cli_quality_gate_report_marks_blocked_sources
+docker compose exec app grant-tool quality-gate
+```
+
+Результат:
+
+```text
+Ran 2 tests
+OK
+
+Search quality gate: passed (10/10 required sources passed)
+```
+
+Повна регресійна перевірка після змін:
+
+```bash
+poetry run python -m unittest discover tests
+```
+
+Результат:
+
+```text
+Ran 65 tests
+OK
+```
+
+### Acceptance Step 9
+
+Step 9 закритий, бо:
+
+- live backfill виконаний для всіх required implementable sources;
+- кожне required джерело має мінімум 10 quality-approved grants;
+- `gurt` має documented Cloudflare exception і не блокує gate;
+- `grantsense` і `grantforward` лишаються deferred/restricted без stable connector;
+- quality gate реалізований як CLI command і може блокувати completion у CI/operator workflow;
+- результати live backfill і gate зафіксовані в документації.
+
 ## Ще Не Перенесено В Implemented
 
 Ці частини залишаються в `plan_for_search.md`, бо вони ще не завершені:
 
-- production backfill і quality gate: мінімум 10 quality-approved grants у `grants` для кожного implementable джерела, крім `gurt`;
 - фінальне закриття Stage Search.

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from grant_tool.client_import import ImportResult, import_application_history, import_client_profiles
 from grant_tool.config import get_settings
-from grant_tool.db.repositories import GrantRepository, SearchSourceReportRow
+from grant_tool.db.repositories import GrantRepository, SearchQualityGateRow, SearchSourceReportRow
 from grant_tool.db.session import SessionLocal
 from grant_tool.embeddings import EmbeddingService, EmbeddingTarget
 from grant_tool.explanations import MatchExplanationService
@@ -15,7 +15,7 @@ from grant_tool.ingestion.connectors import CONNECTOR_CLASSES
 from grant_tool.ingestion.service import IngestionService
 from grant_tool.ingestion.types import DiscoveryMode
 from grant_tool.matching import ShortlistMatchingService
-from grant_tool.sources import seed_mvp_sources
+from grant_tool.sources import QUALITY_GATE_EXCLUDED_SOURCE_SLUGS, QUALITY_GATE_REQUIRED_SOURCE_SLUGS, seed_mvp_sources
 
 
 DEFAULT_CLIENTS_FILE = Path("data/manual_seed/client_profiles.manual.csv")
@@ -127,6 +127,53 @@ def _cmd_search_report(args: argparse.Namespace) -> None:
 
     for line in _format_search_report(rows):
         print(line)
+
+
+def _format_quality_gate_report(rows: list[SearchQualityGateRow]) -> list[str]:
+    if not rows:
+        return ["No quality gate rows found"]
+
+    required_rows = [row for row in rows if row.required]
+    passed_count = sum(1 for row in required_rows if row.passed)
+    status = "passed" if passed_count == len(required_rows) else "blocked"
+    lines = [
+        f"Search quality gate: {status} ({passed_count}/{len(required_rows)} required sources passed)",
+        "source | required | quality/required | total | rejected | status | approved samples",
+        "-" * 132,
+    ]
+    for row in rows:
+        samples = "; ".join(sample.title[:80] for sample in row.samples) or "-"
+        row_status = "passed" if row.passed else "blocked"
+        if not row.required:
+            row_status = "excluded"
+        lines.append(
+            f"{row.source_slug} | "
+            f"{'yes' if row.required else 'no'} | "
+            f"{row.quality_approved_count}/{row.required_count} | "
+            f"{row.grants_total} | "
+            f"{row.rejected_count} | "
+            f"{row_status} | "
+            f"{samples}"
+        )
+    return lines
+
+
+def _cmd_quality_gate(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        rows = repository.search_quality_gate_report(
+            required_source_slugs=list(QUALITY_GATE_REQUIRED_SOURCE_SLUGS),
+            excluded_source_slugs=list(QUALITY_GATE_EXCLUDED_SOURCE_SLUGS),
+            required_count=args.required_count,
+            sample_limit=args.sample_limit,
+        )
+
+    for line in _format_quality_gate_report(rows):
+        print(line)
+
+    required_rows = [row for row in rows if row.required]
+    if not args.no_fail and any(not row.passed for row in required_rows):
+        raise SystemExit(1)
 
 
 def _print_import_result(label: str, result: ImportResult) -> None:
@@ -298,6 +345,12 @@ def _build_parser() -> argparse.ArgumentParser:
     search_report = subparsers.add_parser("search-report", help="Show operational status for search/link extraction")
     search_report.add_argument("--source", default=None, help="Optional source slug")
     search_report.set_defaults(func=_cmd_search_report)
+
+    quality_gate = subparsers.add_parser("quality-gate", help="Check Step 9 quality gate for search sources")
+    quality_gate.add_argument("--required-count", type=int, default=10)
+    quality_gate.add_argument("--sample-limit", type=int, default=10)
+    quality_gate.add_argument("--no-fail", action="store_true", help="Print report without non-zero exit on blocked gate")
+    quality_gate.set_defaults(func=_cmd_quality_gate)
 
     import_clients = subparsers.add_parser("import-clients", help="Import client profiles from CSV")
     import_clients.add_argument("--file", type=Path, default=DEFAULT_CLIENTS_FILE)

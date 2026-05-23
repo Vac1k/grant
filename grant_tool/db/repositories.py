@@ -68,6 +68,28 @@ class SearchSourceReportRow:
     latest_job_refreshed_known: int
 
 
+@dataclass(slots=True)
+class SearchQualityGrantSample:
+    title: str
+    status: str
+    deadline_text: str | None
+    funding_amount_text: str | None
+    source_url: str
+    needs_manual_review: bool
+
+
+@dataclass(slots=True)
+class SearchQualityGateRow:
+    source_slug: str
+    required: bool
+    required_count: int
+    grants_total: int
+    quality_approved_count: int
+    rejected_count: int
+    passed: bool
+    samples: list[SearchQualityGrantSample]
+
+
 class GrantRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -527,6 +549,177 @@ class GrantRepository:
         if needs_manual_review is not None:
             query = query.where(Grant.needs_manual_review.is_(needs_manual_review))
         return int(self.session.scalar(query) or 0)
+
+    def search_quality_gate_report(
+        self,
+        *,
+        required_source_slugs: list[str],
+        excluded_source_slugs: list[str] | None = None,
+        required_count: int = 10,
+        sample_limit: int = 10,
+    ) -> list[SearchQualityGateRow]:
+        excluded = set(excluded_source_slugs or [])
+        source_slugs = sorted(set(required_source_slugs) | excluded)
+        rows: list[SearchQualityGateRow] = []
+        for slug in source_slugs:
+            source = self.get_source_by_slug(slug)
+            if source is None:
+                rows.append(
+                    SearchQualityGateRow(
+                        source_slug=slug,
+                        required=slug not in excluded,
+                        required_count=required_count,
+                        grants_total=0,
+                        quality_approved_count=0,
+                        rejected_count=0,
+                        passed=False,
+                        samples=[],
+                    )
+                )
+                continue
+            grants = list(
+                self.session.scalars(
+                    select(Grant)
+                    .where(Grant.source_id == source.id)
+                    .order_by(Grant.updated_at.desc(), Grant.created_at.desc())
+                )
+            )
+            approved = [grant for grant in grants if self._is_quality_approved_grant(grant)]
+            required = slug not in excluded
+            rows.append(
+                SearchQualityGateRow(
+                    source_slug=slug,
+                    required=required,
+                    required_count=required_count,
+                    grants_total=len(grants),
+                    quality_approved_count=len(approved),
+                    rejected_count=len(grants) - len(approved),
+                    passed=(len(approved) >= required_count) if required else True,
+                    samples=[
+                        SearchQualityGrantSample(
+                            title=grant.title,
+                            status=grant.status,
+                            deadline_text=grant.deadline_text,
+                            funding_amount_text=grant.funding_amount_text,
+                            source_url=grant.source_url,
+                            needs_manual_review=grant.needs_manual_review,
+                        )
+                        for grant in approved[:sample_limit]
+                    ],
+                )
+            )
+        return rows
+
+    @staticmethod
+    def _is_quality_approved_grant(grant: Grant) -> bool:
+        title = (grant.title or "").strip()
+        source_url = (grant.source_url or "").strip()
+        if len(title) < 8 or not source_url.startswith("http"):
+            return False
+        title_lower = title.lower()
+        generic_titles = {
+            "grant",
+            "grants",
+            "funding",
+            "opportunity",
+            "opportunities",
+            "грант",
+            "гранти",
+            "конкурс",
+            "можливості",
+        }
+        if title_lower in generic_titles:
+            return False
+
+        noise_title_terms = (
+            "добірка",
+            "дайджест",
+            "підсумк",
+            "вебінар",
+            "запрошуємо на",
+            "долучився",
+            "долучилась",
+            "відбулася",
+            "воркшоп",
+            "конференц",
+            "презентац",
+            "презентуємо",
+            "стратегічна сесія",
+            "оновлено інтерактивний",
+            "як використовувати",
+        )
+        if any(term in title_lower for term in noise_title_terms):
+            return False
+
+        text_parts = [
+            grant.title,
+            grant.summary,
+            grant.deadline_text,
+            grant.funding_amount_text,
+            grant.funder_name,
+            grant.opportunity_type,
+            grant.support_type,
+            grant.program_name,
+        ]
+        text = " ".join(part for part in text_parts if part).lower()
+        direct_title_terms = (
+            "grant",
+            "grants",
+            "funding",
+            "fund",
+            "call for proposals",
+            "call for applications",
+            "open call",
+            "applications open",
+            "apply now",
+            "cfa",
+            "cfas",
+            "rfp",
+            "rfps",
+            "award",
+            "awards",
+            "prize",
+            "programme",
+            "program",
+            "грант",
+            "грантов",
+            "конкурс",
+            "конкурсний",
+            "фінанс",
+            "відшкодуван",
+            "компенсац",
+            "ваучер",
+            "субсид",
+            "кредит",
+            "прийом заяв",
+            "подання заяв",
+            "відбір",
+        )
+        structured_signal = bool(
+            grant.deadline_at
+            or grant.deadline_text
+            or grant.funding_amount_text
+            or grant.funder_name
+            or grant.application_url
+            or grant.documents
+        )
+        taxonomy_signal = bool(grant.topics or grant.applicant_types or grant.countries or grant.regions)
+        title_keyword_signal = any(term in title_lower for term in direct_title_terms)
+        summary_signal = any(
+            term in (grant.summary or "").lower()
+            for term in (
+                "оголошує конкурс",
+                "прийом заяв",
+                "подати заявку",
+                "call for proposals",
+                "call for applications",
+                "applications open",
+            )
+        )
+        source_slug = grant.source.slug if grant.source is not None else None
+        official_structured_source = source_slug in {"eu-funding", "diia-business", "grant-market"}
+        keyword_signal = title_keyword_signal or summary_signal or official_structured_source
+        return keyword_signal and (structured_signal or taxonomy_signal)
 
     def upsert_grant(
         self,

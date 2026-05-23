@@ -234,6 +234,40 @@ docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --
 docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_status, detail_fetch_status, count(*) from discovered_grant_items group by source_slug, discovery_status, detail_fetch_status order by source_slug;"
 ```
 
+Перевірити operational search report:
+
+```bash
+docker compose exec app grant-tool search-report
+```
+
+Перевірити Step 9 quality gate на мінімум 10 якісних grants для кожного implementable джерела, крім `gurt`:
+
+```bash
+docker compose exec app grant-tool quality-gate
+```
+
+Якщо потрібен тільки report без non-zero exit при blocked gate:
+
+```bash
+docker compose exec app grant-tool quality-gate --no-fail
+```
+
+Для production quality gate використовуй backfill limits, які реально дали 10 quality-approved records:
+
+```bash
+docker compose exec app grant-tool ingest --source eu-funding --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source prostir --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source diia-business --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source chas-zmin --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source eufundingportal-eu --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source hromady --limit 50 --mode backfill
+docker compose exec app grant-tool ingest --source nipo --limit 200 --mode backfill
+docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode backfill
+docker compose exec app grant-tool quality-gate
+```
+
 Нотатки реалізації:
 
 - EU Funding використовує EU Funding & Tenders search API.
@@ -243,6 +277,7 @@ docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_
 - Chas Zmin, EUFundingPortal.eu, Hromady, NIPO і fundsforNGOs використовують WP REST search із RSS fallback.
 - Grant Market використовує sitemap discovery з фільтром `/opp/` і HTML detail parsing.
 - Opportunity Desk використовує WP REST search із category filter `Awards and Grants`, відкидає digest/list posts і має RSS fallback.
+- NIPO використовує розширені WP REST search terms, включно з `SME Fund`, `премія`, `відбір`, `фінансування`, `відшкодування`, бо базові terms давали забагато news/digest content.
 - NIPO, fundsforNGOs і Opportunity Desk позначають результати як `needs_manual_review`, бо ці джерела можуть містити дайджести, новини або широкий міжнародний noise.
 - GrantSense поки не має production connector: live validation показала sitemap/service/category/blog pages і Next.js error shell без стабільного direct opportunity feed.
 - GrantForward поки не має production connector: live validation показала search UI без direct result links у HTML, `404` для WP REST/RSS/sitemap і login/subscription mechanics.

@@ -124,6 +124,20 @@ docker compose exec app grant-tool jobs list --type ingestion
 docker compose exec db psql -U grant -d grant -c "select source_slug, discovery_status, detail_fetch_status, count(*) from discovered_grant_items group by source_slug, discovery_status, detail_fetch_status order by source_slug;"
 ```
 
+Перевірити operational search report:
+
+```bash
+docker compose exec app grant-tool search-report
+```
+
+Перевірити Step 9 quality gate:
+
+```bash
+docker compose exec app grant-tool quality-gate
+```
+
+Quality gate проходить тільки тоді, коли кожне implementable джерело, крім `gurt`, має мінімум 10 quality-approved grants у `grants`.
+
 ## Feature Extraction
 
 ```bash

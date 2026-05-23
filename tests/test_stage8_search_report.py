@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from grant_tool.cli import _format_search_report
-from grant_tool.db.repositories import SearchSourceReportRow
+from grant_tool.cli import _format_quality_gate_report, _format_search_report
+from grant_tool.db.repositories import SearchQualityGateRow, SearchQualityGrantSample, SearchSourceReportRow
 
 
 class Stage8SearchReportTestCase(unittest.TestCase):
@@ -49,6 +49,57 @@ class Stage8SearchReportTestCase(unittest.TestCase):
 
     def test_stage8_cli_search_report_handles_empty_sources(self) -> None:
         self.assertEqual(_format_search_report([]), ["No sources found"])
+
+    def test_stage9_cli_quality_gate_report_marks_blocked_sources(self) -> None:
+        rows = [
+            SearchQualityGateRow(
+                source_slug="prostir",
+                required=True,
+                required_count=10,
+                grants_total=12,
+                quality_approved_count=10,
+                rejected_count=2,
+                passed=True,
+                samples=[
+                    SearchQualityGrantSample(
+                        title="Грантова програма для МСП",
+                        status="open",
+                        deadline_text="до 31 грудня 2026",
+                        funding_amount_text="100000 грн",
+                        source_url="https://www.prostir.ua/grant/1",
+                        needs_manual_review=False,
+                    )
+                ],
+            ),
+            SearchQualityGateRow(
+                source_slug="hromady",
+                required=True,
+                required_count=10,
+                grants_total=6,
+                quality_approved_count=5,
+                rejected_count=1,
+                passed=False,
+                samples=[],
+            ),
+            SearchQualityGateRow(
+                source_slug="gurt",
+                required=False,
+                required_count=10,
+                grants_total=0,
+                quality_approved_count=0,
+                rejected_count=0,
+                passed=True,
+                samples=[],
+            ),
+        ]
+
+        output = "\n".join(_format_quality_gate_report(rows))
+
+        self.assertIn("Search quality gate: blocked (1/2 required sources passed)", output)
+        self.assertIn("prostir | yes | 10/10 | 12 | 2 | passed", output)
+        self.assertIn("hromady | yes | 5/10 | 6 | 1 | blocked", output)
+        self.assertIn("gurt | no | 0/10 | 0 | 0 | excluded", output)
+        self.assertIn("Грантова програма для МСП", output)
 
 
 if __name__ == "__main__":

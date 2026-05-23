@@ -288,6 +288,59 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertEqual(row.latest_job_refreshed_known, 1)
         self.assertIsNotNone(row.last_seen_at)
 
+    def test_stage9_quality_gate_counts_only_grant_like_records(self) -> None:
+        source = self.repository.upsert_source(
+            slug="prostir",
+            name="Prostir",
+            base_url="https://www.prostir.ua",
+            access_strategy=AccessStrategy.RSS,
+        )
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="quality-1",
+            source_url="https://www.prostir.ua/grant/quality-1",
+            title="Грантова програма для українських МСП",
+            status="open",
+            deadline_text="до 31 грудня 2026",
+            funding_amount_text="до 100000 грн",
+            countries=["Ukraine"],
+        )
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="quality-2",
+            source_url="https://www.prostir.ua/grant/quality-2",
+            title="Call for applications: innovation grant",
+            status="unknown",
+            summary="Funding support for SMEs.",
+            applicant_types=["SME"],
+            needs_manual_review=True,
+        )
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="noise-1",
+            source_url="https://www.prostir.ua/news/noise",
+            title="News",
+            status="unknown",
+        )
+
+        rows = self.repository.search_quality_gate_report(
+            required_source_slugs=["prostir"],
+            required_count=2,
+            sample_limit=10,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row.required)
+        self.assertTrue(row.passed)
+        self.assertEqual(row.grants_total, 3)
+        self.assertEqual(row.quality_approved_count, 2)
+        self.assertEqual(row.rejected_count, 1)
+        self.assertCountEqual([sample.title for sample in row.samples], [
+            "Call for applications: innovation grant",
+            "Грантова програма для українських МСП",
+        ])
+
     def test_stage25_job_lifecycle(self) -> None:
         source = self.repository.upsert_source(
             slug="test-source",

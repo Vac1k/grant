@@ -20,7 +20,7 @@
 | `https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/home` | `eu-funding` | Реалізовано | Official/API-style EU search endpoint | HTML portal не scrape-иться; connector використовує EU search API endpoint. |
 | `https://www.grantforward.com/search` | `grantforward` | Deferred / restricted | Не додано connector | Search page доступна, але WP REST/RSS/sitemap повертають `404`, HTML не має direct result links без JS/search flow, є login/subscription mechanics. |
 | `https://www.fundsforngos.org/` | `fundsforngos` | Реалізовано через equivalent working host | WordPress REST + RSS fallback | Дубль попереднього fundsforNGOs URL; production connector налаштований на `https://www2.fundsforngos.org/`. |
-| `https://nipo.gov.ua/dajdzhest-1-kvartal-2025/` | `nipo` | Частково реалізовано на рівні домену | WordPress REST + RSS fallback | Connector є для `nipo.gov.ua`, але конкретна digest-сторінка не є окремим source. NIPO results позначаються `needs_manual_review`. |
+| `https://nipo.gov.ua/dajdzhest-1-kvartal-2025/` | `nipo` | Частково реалізовано на рівні домену | WordPress REST + RSS fallback | Connector є для `nipo.gov.ua`, але конкретна digest-сторінка не є окремим source. Для Step 9 додано розширені search terms (`SME Fund`, `премія`, `відбір`, `фінансування`, `відшкодування`), бо джерело має високий news/digest noise. NIPO results позначаються `needs_manual_review`. |
 | `https://hromady.org/41049-2/` | `hromady` | Частково реалізовано на рівні домену | WordPress REST + RSS fallback | Connector є для `hromady.org`, але конкретна сторінка `41049-2` не є окремим source. |
 
 Підсумок:
@@ -50,5 +50,5 @@
 | fundsforNGOs | `https://www2.fundsforngos.org/` | WordPress REST API | Реалізовано у Step 4.2 через WP REST search. Джерело широке і міжнародне, тому normalized grants позначаються як `needs_manual_review`. |
 | Opportunity Desk | `https://www.opportunitydesk.org/` | WordPress REST API або RSS | Реалізовано у Step 4.3 через WP REST search з category filter `Awards and Grants`. Джерело широке, тому digest/list posts відкидаються, а normalized grants позначаються як `needs_manual_review`. |
 | GrantForward | `https://www.grantforward.com/` | Deferred / restricted HTML | У Step 4.3 не додано як робочий connector. Search page доступна, але WP REST/RSS/sitemap повертають `404`, HTML не містить direct result links без JS/search flow, а сайт має login/subscription mechanics. |
-| NIPO | `https://nipo.gov.ua/` | WordPress REST API або RSS | Реалізовано у Step 4.2 через WP REST search. Джерело може містити дайджести або новини, тому normalized grants позначаються як `needs_manual_review`. |
+| NIPO | `https://nipo.gov.ua/` | WordPress REST API або RSS | Реалізовано у Step 4.2 через WP REST search. У Step 9 розширено search terms, щоб добрати достатньо прямих grant-like records для quality gate. Джерело може містити дайджести або новини, тому normalized grants позначаються як `needs_manual_review`. |
 | Hromady | `https://hromady.org/` | WordPress REST API або RSS | Реалізовано у Step 4.1 через WP REST primary і RSS fallback для громад і локального розвитку. |
