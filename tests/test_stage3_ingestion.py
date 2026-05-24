@@ -19,6 +19,7 @@ from grant_tool.ingestion.connectors import (
     EUFundingPortalEuConnector,
     EUFundingConnector,
     FundsForNgosConnector,
+    GrantForwardConnector,
     GrantMarketConnector,
     GurtConnector,
     HromadyConnector,
@@ -53,6 +54,7 @@ class FakeHttpClient:
         data: Any | None = None,
         files: Any | None = None,
         json: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> HttpResponse:
         self.calls.append(("POST", url))
         if url not in self.responses:
@@ -107,6 +109,8 @@ def source_fixture_cases() -> list[dict[str, Any]]:
     grant_market_detail_url = "https://grant.market/opp/ebrd-consulting"
     fundsforngos_api_url = "https://www2.fundsforngos.org/wp-json/wp/v2/posts"
     opportunitydesk_api_url = "https://www.opportunitydesk.org/wp-json/wp/v2/posts"
+    grantforward_list_url = "https://www.grantforward.com/search"
+    grantforward_api_url = "https://www.grantforward.com/search/search"
     return [
         {
             "slug": "eu-funding",
@@ -240,6 +244,20 @@ def source_fixture_cases() -> list[dict[str, Any]]:
             "responses": {opportunitydesk_api_url: json_response(opportunitydesk_api_url, "opportunitydesk/posts.json")},
             "listing_url": opportunitydesk_api_url,
             "listing_method": "GET",
+            "detail_urls": [],
+        },
+        {
+            "slug": "grantforward",
+            "access_strategy": AccessStrategy.API,
+            "base_url": "https://www.grantforward.com",
+            "list_url": grantforward_list_url,
+            "api_url": grantforward_api_url,
+            "responses": {
+                grantforward_list_url: html_response(grantforward_list_url, "grantforward/search.html"),
+                grantforward_api_url: json_response(grantforward_api_url, "grantforward/search_response.json"),
+            },
+            "listing_url": grantforward_api_url,
+            "listing_method": "POST",
             "detail_urls": [],
         },
     ]
@@ -597,6 +615,40 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertTrue(grant.needs_manual_review)
         self.assertIn("Broad opportunity", grant.manual_review_reason)
 
+    def test_grantforward_connector_parses_public_search_response(self) -> None:
+        list_url = "https://www.grantforward.com/search"
+        api_url = "https://www.grantforward.com/search/search"
+        source = self.source(
+            slug="grantforward",
+            access_strategy=AccessStrategy.API,
+            base_url="https://www.grantforward.com",
+            list_url=list_url,
+            api_url=api_url,
+        )
+        connector = GrantForwardConnector(
+            source=source,
+            http_client=FakeHttpClient(
+                {
+                    list_url: html_response(list_url, "grantforward/search.html"),
+                    api_url: json_response(api_url, "grantforward/search_response.json"),
+                }
+            ),
+        )
+
+        result = connector.run(limit=10)
+
+        self.assertEqual(len(result.errors), 0)
+        self.assertEqual(len(result.grants), 2)
+        grant = result.grants[0].normalized
+        self.assertEqual(grant.source_record_id, "1198758")
+        self.assertIn("Canada Fund", grant.title)
+        self.assertEqual(grant.status, "open")
+        self.assertEqual(grant.funder_name, "Government of Canada")
+        self.assertEqual(grant.deadline_text, "June 10, 2026")
+        self.assertIn("$25,000", grant.funding_amount_text or "")
+        self.assertTrue(grant.needs_manual_review)
+        self.assertIn("detail pages require login", grant.manual_review_reason or "")
+
     def test_connector_registry_includes_wave_sources(self) -> None:
         self.assertIs(CONNECTOR_CLASSES["chas-zmin"], ChasZminConnector)
         self.assertIs(CONNECTOR_CLASSES["eufundingportal-eu"], EUFundingPortalEuConnector)
@@ -605,6 +657,7 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertIs(CONNECTOR_CLASSES["grant-market"], GrantMarketConnector)
         self.assertIs(CONNECTOR_CLASSES["fundsforngos"], FundsForNgosConnector)
         self.assertIs(CONNECTOR_CLASSES["opportunitydesk"], OpportunityDeskConnector)
+        self.assertIs(CONNECTOR_CLASSES["grantforward"], GrantForwardConnector)
 
     def test_ingestion_service_saves_snapshots_grants_and_job(self) -> None:
         feed_url = "https://www.prostir.ua/category/grants/feed/"

@@ -1,10 +1,10 @@
-# Existing Data Fields
+# Наявні Поля Даних
 
-## Sources
+## Джерела
 
-Table: `sources`
+Таблиця: `sources`
 
-Fields:
+Поля:
 
 - `id`
 - `created_at`
@@ -23,7 +23,7 @@ Fields:
 - `notes`
 - `source_metadata`
 
-Enum values for `access_strategy`:
+Значення enum для `access_strategy`:
 
 - `api`
 - `wp_rest`
@@ -33,14 +33,26 @@ Enum values for `access_strategy`:
 - `browser`
 - `manual`
 
-Seeded source slugs:
+Source slugs, які створює `seed-sources`:
 
 - `eu-funding`
 - `prostir`
 - `diia-business`
 - `gurt`
+- `chas-zmin`
+- `eufundingportal-eu`
+- `hromady`
+- `nipo`
+- `grant-market`
+- `fundsforngos`
+- `opportunitydesk`
+- `grantforward`
 
-## Discovered Grant Items
+Не створюється як working connector:
+
+- `grantsense`: blocked/deferred після live-перевірки, бо немає стабільного public opportunity feed.
+
+## Знайдені Grant Items
 
 Таблиця: `discovered_grant_items`
 

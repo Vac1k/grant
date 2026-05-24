@@ -6,12 +6,12 @@
 cd /Users/vac1k/Projects/ai_replace_grandwriters/grant
 ```
 
-Проєкт зараз реалізований до Stage 9:
+Проєкт зараз має завершений Stage Search / Link Extraction і реалізований application pipeline до Stage 9:
 
 - Stage 1/2: FastAPI, Docker Compose, PostgreSQL/pgvector, SQLAlchemy, Alembic.
 - Stage 2.5: seed джерел і tracking через `JobRun`.
 - Stage 3: ingestion MVP-джерел EU Funding, Prostir, Diia Business і GURT.
-- Stage Search Step 4.1/4.2/4.3: додаткові конектори під окремі джерела для Chas Zmin, EUFundingPortal.eu, Hromady, NIPO, Grant Market, fundsforNGOs і Opportunity Desk.
+- Stage Search Step 4.1/4.2/4.3 + re-audit: додаткові конектори під окремі джерела для Chas Zmin, EUFundingPortal.eu, Hromady, NIPO, Grant Market, fundsforNGOs, Opportunity Desk і GrantForward.
 - Stage 4: імпорт ручних CSV для client profiles і application history.
 - Stage 5: deterministic feature extraction з optional OpenAI LLM enrichment.
 - Stage 6: shortlist matching.
@@ -221,6 +221,7 @@ docker compose exec app grant-tool ingest --source nipo --limit 20 --mode increm
 docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode incremental
 docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode incremental
+docker compose exec app grant-tool ingest --source grantforward --limit 10 --mode incremental
 ```
 
 Режими:
@@ -265,6 +266,7 @@ docker compose exec app grant-tool ingest --source nipo --limit 200 --mode backf
 docker compose exec app grant-tool ingest --source grant-market --limit 20 --mode backfill
 docker compose exec app grant-tool ingest --source fundsforngos --limit 20 --mode backfill
 docker compose exec app grant-tool ingest --source opportunitydesk --limit 20 --mode backfill
+docker compose exec app grant-tool ingest --source grantforward --limit 10 --mode backfill
 docker compose exec app grant-tool quality-gate
 ```
 
@@ -277,6 +279,7 @@ docker compose exec app grant-tool quality-gate
 - Chas Zmin, EUFundingPortal.eu, Hromady, NIPO і fundsforNGOs використовують WP REST search із RSS fallback.
 - Grant Market використовує sitemap discovery з фільтром `/opp/` і HTML detail parsing.
 - Opportunity Desk використовує WP REST search із category filter `Awards and Grants`, відкидає digest/list posts і має RSS fallback.
+- GrantForward використовує public search AJAX endpoint `/search/search`; detail pages редиректять на login, тому connector нормалізує тільки public search fields і ставить `needs_manual_review`.
 - NIPO використовує розширені WP REST search terms, включно з `SME Fund`, `премія`, `відбір`, `фінансування`, `відшкодування`, бо базові terms давали забагато news/digest content.
 - NIPO, fundsforNGOs і Opportunity Desk позначають результати як `needs_manual_review`, бо ці джерела можуть містити дайджести, новини або широкий міжнародний noise.
 - GrantSense поки не має production connector: live validation показала sitemap/service/category/blog pages і Next.js error shell без стабільного direct opportunity feed.

@@ -717,7 +717,7 @@ class GrantRepository:
             )
         )
         source_slug = grant.source.slug if grant.source is not None else None
-        official_structured_source = source_slug in {"eu-funding", "diia-business", "grant-market"}
+        official_structured_source = source_slug in {"eu-funding", "diia-business", "grant-market", "grantforward"}
         keyword_signal = title_keyword_signal or summary_signal or official_structured_source
         return keyword_signal and (structured_signal or taxonomy_signal)
 

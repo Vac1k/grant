@@ -51,8 +51,9 @@ class HttpClient:
         data: Any | None = None,
         files: Any | None = None,
         json: Any | None = None,
+        headers: dict[str, str] | None = None,
     ) -> HttpResponse:
-        response = self._request("POST", url, params=params, data=data, files=files, json=json)
+        response = self._request("POST", url, params=params, data=data, files=files, json=json, headers=headers)
         return self._to_response(response)
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:

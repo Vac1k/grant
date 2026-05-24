@@ -341,6 +341,34 @@ class RepositoryTestCase(unittest.TestCase):
             "Грантова програма для українських МСП",
         ])
 
+    def test_stage9_quality_gate_treats_grantforward_as_structured_grant_search(self) -> None:
+        source = self.repository.upsert_source(
+            slug="grantforward",
+            name="GrantForward",
+            base_url="https://www.grantforward.com",
+            access_strategy=AccessStrategy.API,
+        )
+        self.repository.upsert_grant(
+            source_id=source.id,
+            source_record_id="1198758",
+            source_url="https://www.grantforward.com/grant?grant_id=1198758",
+            title="The Canada Fund for Local Initiatives - Ukraine (2026)",
+            status="open",
+            deadline_text="June 10, 2026",
+            funder_name="Government of Canada",
+            needs_manual_review=True,
+        )
+
+        rows = self.repository.search_quality_gate_report(
+            required_source_slugs=["grantforward"],
+            required_count=1,
+            sample_limit=10,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].passed)
+        self.assertEqual(rows[0].quality_approved_count, 1)
+
     def test_stage25_job_lifecycle(self) -> None:
         source = self.repository.upsert_source(
             slug="test-source",
@@ -391,13 +419,13 @@ class RepositoryTestCase(unittest.TestCase):
 
         source_count = self.session.scalar(select(func.count(Source.id)))
 
-        self.assertEqual(source_count, 11)
-        self.assertEqual(len(first_sources), 11)
-        self.assertEqual(len(second_sources), 11)
-        self.assertEqual(first_job.created_count, 11)
+        self.assertEqual(source_count, 12)
+        self.assertEqual(len(first_sources), 12)
+        self.assertEqual(len(second_sources), 12)
+        self.assertEqual(first_job.created_count, 12)
         self.assertEqual(first_job.updated_count, 0)
         self.assertEqual(second_job.created_count, 0)
-        self.assertEqual(second_job.updated_count, 11)
+        self.assertEqual(second_job.updated_count, 12)
         self.assertEqual(first_job.status, JobStatus.SUCCESS.value)
         self.assertEqual(second_job.status, JobStatus.SUCCESS.value)
         self.assertIsNotNone(self.repository.get_source_by_slug("eu-funding"))
@@ -409,6 +437,7 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertEqual(self.repository.get_source_by_slug("grant-market").access_strategy, "sitemap_html")
         self.assertEqual(self.repository.get_source_by_slug("fundsforngos").access_strategy, "wp_rest")
         self.assertEqual(self.repository.get_source_by_slug("opportunitydesk").access_strategy, "wp_rest")
+        self.assertEqual(self.repository.get_source_by_slug("grantforward").access_strategy, "api")
 
 
 if __name__ == "__main__":

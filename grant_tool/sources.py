@@ -204,6 +204,27 @@ WAVE3_SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
             "broad_opportunity_source": True,
         },
     },
+    {
+        "slug": "grantforward",
+        "name": "GrantForward public search results",
+        "base_url": "https://www.grantforward.com",
+        "list_url": "https://www.grantforward.com/search",
+        "api_url": "https://www.grantforward.com/search/search",
+        "access_strategy": AccessStrategy.API,
+        "rate_limit_seconds": 8,
+        "notes": (
+            "Use the public search AJAX endpoint with Ukraine-focused search text. Detail pages redirect to login, "
+            "so the connector normalizes only public search-result fields."
+        ),
+        "source_metadata": {
+            "priority": 12,
+            "wave": "grantforward_reaudit",
+            "region_focus": ["Global", "Ukraine"],
+            "grantforward_search_text": "ukraine",
+            "detail_requires_login": True,
+            "broad_international_source": True,
+        },
+    },
 )
 
 SOURCE_DEFINITIONS: tuple[dict[str, Any], ...] = (
@@ -221,6 +242,7 @@ QUALITY_GATE_REQUIRED_SOURCE_SLUGS: tuple[str, ...] = (
     "grant-market",
     "fundsforngos",
     "opportunitydesk",
+    "grantforward",
 )
 
 QUALITY_GATE_EXCLUDED_SOURCE_SLUGS: tuple[str, ...] = ("gurt",)

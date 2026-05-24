@@ -1,5 +1,6 @@
 from grant_tool.ingestion.connectors.diia_business import DiiaBusinessConnector
 from grant_tool.ingestion.connectors.eu_funding import EUFundingConnector
+from grant_tool.ingestion.connectors.grantforward import GrantForwardConnector
 from grant_tool.ingestion.connectors.grant_market import GrantMarketConnector
 from grant_tool.ingestion.connectors.gurt import GurtConnector
 from grant_tool.ingestion.connectors.prostir import ProstirConnector
@@ -24,6 +25,7 @@ CONNECTOR_CLASSES = {
     GrantMarketConnector.source_slug: GrantMarketConnector,
     FundsForNgosConnector.source_slug: FundsForNgosConnector,
     OpportunityDeskConnector.source_slug: OpportunityDeskConnector,
+    GrantForwardConnector.source_slug: GrantForwardConnector,
 }
 
 __all__ = [
@@ -33,6 +35,7 @@ __all__ = [
     "EUFundingPortalEuConnector",
     "EUFundingConnector",
     "FundsForNgosConnector",
+    "GrantForwardConnector",
     "GrantMarketConnector",
     "GurtConnector",
     "HromadyConnector",
