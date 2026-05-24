@@ -2,123 +2,56 @@
 
 ## Призначення Файлу
 
-Цей файл містить тільки те, що ще треба реалізувати для великого Stage Search.
+Цей файл використовується для відкритих пунктів великого Stage Search.
 
-Правило роботи:
+Поточний стан: відкритих implementation steps для Stage Search немає.
 
-- коли пункт реалізовано і перевірено, він переноситься в `implemented_for_search.md`;
-- якщо пункт тільки обговорений, він залишається тут;
-- якщо пункт частково реалізований, тут лишається незакрита частина;
-- Stage Search не закривається після однієї хвилі або одного підетапу.
+Усі виконані пункти перенесені в `implemented_for_search.md`.
 
 ## Великий Stage Search
 
-Мета великого Stage Search - побудувати правильний, якісний і масштабований пошук грантів по всіх наданих сайтах, а не тільки по 4 MVP-джерелах.
+Статус: завершено.
 
-Початкові вимоги:
+Дата закриття: `2026-05-24`.
 
-1. Розширити логіку на всі надані сайти, а не лише на 4 MVP-джерела.
-2. Пройтись по кожному сайту і знайти підхід до діставання якісних даних.
-3. Зробити уніфікований підхід для діставання даних з кожного сайту.
-4. Створити standardized initial table для збереження результатів пошуку перед raw details.
-5. Покращити роль `raw_grant_snapshots`, не змішуючи raw audit data з бізнес-нормалізацією.
-6. Зробити початкову логіку витягання всіх релевантних grant-like opportunities без обов'язкового active-only фільтра на рівні search.
-7. Після початкового наповнення БД витягати тільки нові гранти, які з'явились, а не додавати повторно ті самі гранти.
+Stage Search / Link Extraction закритий, бо виконані початкові вимоги:
 
-## Коли Великий Stage Search Може Бути Завершений
+1. Логіку розширено на всі надані сайти, а не лише на 4 MVP-джерела.
+2. Кожен сайт проаудитований і має documented extraction decision.
+3. Для кожного implementable сайту створено source-specific connector.
+4. Реалізовано уніфікований контракт `discover -> fetch_detail -> normalize`.
+5. Створено standardized initial discovery table `discovered_grant_items`.
+6. `raw_grant_snapshots` використовується для raw detail payload, а не як бізнес-таблиця пошуку.
+7. Search stage збирає релевантні grant-like opportunities без active-only фільтра.
+8. Incremental mode перечитує listing/API/search endpoint і додає тільки нові item-level grants.
+9. Для кожного implementable джерела, крім `gurt`, у `grants` є мінімум 10 quality-approved records.
+10. `gurt` закритий documented Cloudflare/human-check limitation без bypass.
+11. `grantsense` закритий documented deferred/blocked reason.
+12. `grantforward` реалізований через public search AJAX endpoint із documented login-only detail limitation.
 
-Stage Search можна вважати завершеним тільки тоді, коли всі надані links із `docs/initial_sources.md` будуть закриті одним із двох способів:
+## Закриті Джерела
 
-1. Джерело реалізоване:
-   - є source-specific connector;
-   - є `discover`;
-   - є `fetch_detail`;
-   - є `normalize`;
-   - item записується в `discovered_grant_items`;
-   - grant записується або оновлюється в `grants`;
-   - для кожного implementable джерела, крім `gurt`, у БД додано мінімум 10 якісних grant records;
-   - 10 records перевірені як релевантні grant-like opportunities, а не просто будь-які новини або broad finance pages;
-   - є automated tests;
-   - є real website validation.
+Реалізовані джерела:
 
-2. Джерело документовано відхилене:
-   - немає public access;
-   - потрібен login або paid access;
-   - сайт блокує збір;
-   - немає достатньо якісних даних;
-   - немає стабільного search/list/detail механізму;
-   - причина відхилення підтверджена реальною перевіркою.
+- `eu-funding`;
+- `prostir`;
+- `diia-business`;
+- `chas-zmin`;
+- `eufundingportal-eu`;
+- `hromady`;
+- `nipo`;
+- `grant-market`;
+- `fundsforngos`;
+- `opportunitydesk`;
+- `grantforward`.
 
-Якщо хоча б один наданий link не реалізований, не протестований і не має documented rejection reason, Stage Search ще не завершений.
+Закриті як restricted/deferred:
 
-Окреме правило якості: Stage Search не можна завершити тільки тому, що connector повернув один sample item. Для кожного implementable джерела потрібно виконати production backfill/validation і отримати мінімум 10 якісних grants у `grants`. Виняток: `gurt`, бо правильний URL блокується Cloudflare/human-check і вже має documented access limitation. Deferred/restricted джерела не рахуються як implementable, доки не з'явиться стабільний public access path.
+- `gurt` - правильний grants URL блокується Cloudflare/human-check;
+- `grantsense` - немає стабільного public direct opportunity feed/API.
 
-## Архітектурне Правило
+## Поточний Plan State
 
-Не робимо один універсальний scraper для всіх сайтів.
+Немає відкритих пунктів для Stage Search.
 
-Правильний підхід:
-
-```text
-окремий source-specific connector для кожного сайту
-  -> єдиний контракт discover/fetch_detail/normalize
-  -> єдиний DTO DiscoveredGrantItemDraft
-  -> єдина таблиця discovered_grant_items
-  -> єдині правила incremental/backfill
-  -> однаковий test і documentation стандарт
-```
-
-Стандартизуємо:
-
-- output format;
-- DTO;
-- statuses;
-- deduplication;
-- `discovered_grant_items`;
-- job counters;
-- tests;
-- documentation;
-- real website validation format.
-
-Не стандартизуємо як одну shared scraping logic:
-
-- CSS selectors;
-- API parameters;
-- RSS parsing details;
-- WP REST endpoint filters;
-- sitemap filters;
-- HTML fallback rules.
-
-## Step 10: Фінальна Документація І Закриття Stage Search
-
-Перед закриттям Stage Search треба оновити:
-
-- `implemented_for_search.md`;
-- `plan_for_search.md`;
-- `docs/initial_sources.md`;
-- `docs/fields.md`;
-- `docs/operations.md`;
-- connector-specific notes;
-- real website validation records.
-
-Фінальна acceptance checklist:
-
-- всі provided links закриті;
-- всі implementable sources реалізовані;
-- всі rejected/deferred sources мають причину;
-- всі connectors мають tests;
-- всі connectors перевірені на реальних сайтах;
-- кожне implementable джерело, крім `gurt`, має мінімум 10 quality-approved grants у `grants`;
-- `gurt` має актуальне documented Cloudflare/human-check limitation без bypass;
-- initial backfill працює;
-- incremental new-only collection працює;
-- refresh policy для known open grants після extraction визначена або реалізована;
-- documentation відповідає фактичній реалізації.
-
-## Підсумок
-
-Це один великий Stage Search із кількома steps.
-
-Хвилі реалізації джерел уже перенесені в `implemented_for_search.md`; вони не є окремими stage-ами.
-
-Stage Search не завершується після реалізації MVP-джерел або перевірки конекторів на реальних сайтах. Він завершується тільки після повного виконання початкових вимог: всі надані сайти проаналізовані, якісні джерела реалізовані або documented deferred/restricted, incremental new-only логіка підтверджена, refresh policy визначена, операційна видимість search додана, і кожне implementable джерело, крім `gurt`, має мінімум 10 quality-approved grants у `grants`.
+Цей файл не містить roadmap; він тільки фіксує, що для Stage Search не залишилось відкритих пунктів.
