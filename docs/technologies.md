@@ -40,6 +40,7 @@
 Ключові таблиці:
 
 - `sources`
+- `discovered_grant_items`
 - `raw_grant_snapshots`
 - `grants`
 - `client_profiles`
@@ -48,6 +49,8 @@
 - `match_runs`
 - `grant_client_matches`
 - `reports`
+
+Item-level результати пошуку зберігаються в `discovered_grant_items`.
 
 Сирі дані з сайтів або API зберігаються окремо від очищених записів грантів.
 
@@ -69,14 +72,32 @@
 
 Кожне джерело має окремий connector.
 
-Поточні MVP-джерела:
+Поточні робочі connectors після завершеного Search / Link Extraction stage:
 
-- EU Funding & Tenders Portal
-- Prostir
-- Diia Business
-- GURT
+- `eu-funding`
+- `prostir`
+- `diia-business`
+- `chas-zmin`
+- `eufundingportal-eu`
+- `hromady`
+- `nipo`
+- `grant-market`
+- `fundsforngos`
+- `opportunitydesk`
+- `grantforward`
 
-Connector відповідає тільки за отримання даних із конкретного джерела і перетворення їх у внутрішній формат `FetchedGrant`.
+Окремі documented decisions:
+
+- `gurt`: connector існує локально, але production validation заблокована Cloudflare/human-check;
+- `grantsense`: connector не додано, бо live validation не підтвердила стабільний public direct opportunity feed.
+
+Connector відповідає за source-specific доступ до даних і працює через єдиний ingestion contract:
+
+```text
+discover -> fetch_detail -> normalize
+```
+
+Search result спочатку перетворюється на `DiscoveredGrantItemDraft`, detail payload зберігається як raw snapshot, а фінальний normalized record потрапляє в `grants`.
 
 ## Feature Extraction
 

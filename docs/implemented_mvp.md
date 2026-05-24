@@ -25,6 +25,8 @@ MVP створює локальний web-інструмент для збору
 - GURT grants;
 - Diia Business finance programs.
 
+Примітка після завершення Search / Link Extraction stage: цей документ описує саме історичний MVP scope. Поточний search layer розширений на всі implementable надані джерела і задокументований окремо в `docs/plan/search/implemented_for_search.md` та `docs/initial_sources.md`.
+
 Клієнтські дані у MVP подаються через локальні CSV-файли:
 
 - `data/manual_seed/client_profiles.manual.csv`;

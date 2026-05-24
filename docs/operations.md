@@ -275,7 +275,7 @@ docker compose exec app grant-tool quality-gate
 - EU Funding використовує EU Funding & Tenders search API.
 - Prostir використовує RSS discovery і HTML detail parsing.
 - Diia Business використовує public frontend finance API, бо це якісніше за scraping Angular shell сторінок.
-- GURT використовує HTML list/detail parsing.
+- GURT має HTML list/detail connector, але production validation блокується Cloudflare/human-check; bypass не використовується.
 - Chas Zmin, EUFundingPortal.eu, Hromady, NIPO і fundsforNGOs використовують WP REST search із RSS fallback.
 - Grant Market використовує sitemap discovery з фільтром `/opp/` і HTML detail parsing.
 - Opportunity Desk використовує WP REST search із category filter `Awards and Grants`, відкидає digest/list posts і має RSS fallback.
@@ -283,7 +283,6 @@ docker compose exec app grant-tool quality-gate
 - NIPO використовує розширені WP REST search terms, включно з `SME Fund`, `премія`, `відбір`, `фінансування`, `відшкодування`, бо базові terms давали забагато news/digest content.
 - NIPO, fundsforNGOs і Opportunity Desk позначають результати як `needs_manual_review`, бо ці джерела можуть містити дайджести, новини або широкий міжнародний noise.
 - GrantSense поки не має production connector: live validation показала sitemap/service/category/blog pages і Next.js error shell без стабільного direct opportunity feed.
-- GrantForward поки не має production connector: live validation показала search UI без direct result links у HTML, `404` для WP REST/RSS/sitemap і login/subscription mechanics.
 - Ingestion спочатку зберігає item-level результат пошуку у `discovered_grant_items`.
 - Raw detail payload зберігається у `raw_grant_snapshots`.
 - Нормалізований грант записується або оновлюється у `grants`.

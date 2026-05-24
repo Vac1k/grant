@@ -695,11 +695,13 @@ Deferred source не вважається rejected.
 
 Для `gurt` ситуація інша: connector уже існує і локально тестується, але production validation deferred через Cloudflare/human-check. Тому source не rejected і не removed, але його не можна вважати fully production validated.
 
-На поточному етапі це стосується:
+На момент Step 3 це стосувалося:
 
 - `gurt` production validation, доки не знайдено дозволений спосіб пройти Cloudflare/human-check або альтернативний public endpoint;
 - `grantsense`, доки не підтверджено, що source дає конкретні grant opportunities;
 - `grantforward`, доки не підтверджено public detail access без login/paywall.
+
+Після пізнішого re-audit `grantforward` реалізований через public search AJAX endpoint, але detail pages залишаються login-only.
 
 ### Acceptance Step 3
 
@@ -1351,8 +1353,11 @@ tests.test_stage3_ingestion.Stage3IngestionTestCase.test_incremental_mode_skips_
 | `grant-market` | `sitemap_html` | canonical detail URL | `passed_local_incremental_test` |
 | `fundsforngos` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
 | `opportunitydesk` | `wp_rest` | WordPress post id | `passed_local_incremental_test` |
+| `grantforward` | `api` / public search AJAX | `js-result-id` / GrantForward search result id | `passed_after_reaudit` |
 
-`grantsense` і `grantforward` не входять у Step 6 connector test, бо вони не мають реалізованих connectors і вже мають documented deferred/restricted decision.
+`grantsense` не входить у Step 6 connector test, бо source має documented deferred/blocked decision.
+
+`grantforward` не входив у початковий Step 6 test на момент виконання Step 6, але після повторного аудиту connector був доданий, покритий окремим тестом і включений у фінальний quality gate.
 
 ### Команда Перевірки Step 6
 
@@ -1384,13 +1389,14 @@ OK
 
 Step 6 закритий, бо:
 
-- incremental behavior підтверджено для всіх 11 configured connectors;
+- incremental behavior підтверджено для configured connectors на момент Step 6;
+- після re-audit `grantforward` додано як 12-й configured source і покрито окремим connector test;
 - known item не створює дубль `grants`;
 - known item не створює дубль `raw_grant_snapshots`;
 - known item отримує `detail_fetch_status=skipped_known`;
 - listing/search endpoint перечитується повторно, тому нові item на старій сторінці можуть бути знайдені;
 - detail-fetch не виконується повторно для known item у звичайному `incremental`;
-- `grantsense` і `grantforward` залишаються поза тестом як джерела без connector через documented deferred/restricted decision.
+- `grantsense` залишається поза тестом як джерело без connector через documented deferred/blocked decision.
 
 ## Реалізовано: Step 7 - Періодичне Оновлення Відомих Open Grants Після Extraction
 
@@ -2018,8 +2024,8 @@ Step 10 закрив documentation state для всього Stage Search.
 
 Оновлено:
 
-- `docs/plan/implemented_for_search.md` - містить фактичний завершений стан Stage Search;
-- `docs/plan/plan_for_search.md` - більше не містить відкритих implementation steps для Stage Search;
+- `docs/plan/search/implemented_for_search.md` - містить фактичний завершений стан Stage Search;
+- `docs/plan/search/plan_for_search.md` - більше не містить відкритих implementation steps для Stage Search;
 - `docs/initial_sources.md` - відображає реалізовані, deferred і restricted джерела;
 - `docs/fields.md` - відображає seeded sources і поля, які використовує реалізація;
 - `docs/operations.md` - відображає поточні production commands, quality gate і operational rules;

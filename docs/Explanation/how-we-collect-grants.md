@@ -21,7 +21,8 @@ API можна уявити як офіційний вхід до даних. І
 Приклади:
 
 - EU Funding & Tenders Portal;
-- Diia Business finance programs, де доступний публічний frontend API.
+- Diia Business finance programs, де доступний публічний frontend API;
+- GrantForward public search AJAX, де доступна тільки перша public search page без login.
 
 Для таких джерел інструмент запитує записи через API, а потім зберігає потрібну інформацію в базу даних.
 
@@ -65,14 +66,22 @@ grant-tool ingest --all --limit 20
 
 інструмент спробує зібрати до 20 можливостей з кожного налаштованого джерела.
 
-Для поточних MVP-джерел це означає:
+Для поточних налаштованих джерел це означає:
 
 - до 20 з EU Funding;
 - до 20 з Prostir;
 - до 20 з Diia Business;
-- до 20 з GURT.
+- до 20 з Chas Zmin;
+- до 20 з EUFundingPortal.eu;
+- до 20 з Hromady;
+- до 20 з NIPO;
+- до 20 з Grant Market;
+- до 20 з fundsforNGOs;
+- до 20 з Opportunity Desk;
+- до 10 з GrantForward, бо public search endpoint без login дає тільки першу сторінку;
+- GURT має connector, але production access зараз блокується Cloudflare/human-check.
 
-Тобто за один запуск може бути зібрано приблизно до 80 можливостей, якщо кожне джерело має достатньо доступних записів.
+Тобто за один запуск інструмент збирає обмежену кількість можливостей із кожного доступного джерела. Фактична кількість може бути меншою за `limit`, якщо джерело повернуло менше якісних записів або якщо source має access limitation.
 
 ## Чому ми не завантажуємо все підряд
 
@@ -92,6 +101,8 @@ grant-tool ingest --all --limit 20
 ## Яку інформацію ми зберігаємо
 
 Для кожної зібраної можливості інструмент зберігає два типи даних.
+
+Перед raw detail даними інструмент також зберігає item-level результат пошуку в `discovered_grant_items`. Це відповідає на питання: "який grant-like item ми знайшли на listing/API/search endpoint".
 
 Перший тип - оригінальні raw дані:
 

@@ -115,6 +115,8 @@ docker compose exec app grant-tool ingest --source grantforward --limit 10 --mod
 
 Для `grantforward` використовуй `--limit 10`: публічний search endpoint дає тільки першу сторінку без login, а більший limit повертає login/sign-up message.
 
+Для `gurt` connector існує, але live production access зараз може падати через Cloudflare/human-check. Це documented limitation, не причина обходити захист.
+
 Перевірити ingestion jobs:
 
 ```bash
