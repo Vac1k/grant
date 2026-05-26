@@ -43,6 +43,27 @@
 
 Не змінюємо search stage, якщо проблема знаходиться в якості normalized data.
 
+`grants` лишається широкою normalized таблицею. Це не означає, що кожне джерело повинно заповнювати кожне поле.
+
+Через різну якість джерел не можна вимагати 100% заповнення всіх grant fields:
+
+- API може давати структуровані fields;
+- WordPress часто дає title і content, але не дає funder або amount окремо;
+- RSS може давати тільки title, link і short summary;
+- sitemap/HTML може давати тільки URL і raw text;
+- GrantForward дає public search fields, але detail pages login-only;
+- NIPO/Hromady можуть давати digest/news-like content.
+
+Правильне правило:
+
+```text
+усі grants повинні мати core fields
+інші fields заповнюються best-effort
+якість запису оцінюється через quality score, quality flags і manual review
+```
+
+Не можна змушувати connector вигадувати дані, якщо source їх не дав. Якщо поле не можна надійно витягнути, воно лишається пустим або отримує quality flag/manual review reason.
+
 Правильний flow для цього етапу:
 
 ```text
@@ -121,9 +142,11 @@ Acceptance:
 
 Мета: визначити, що таке якісний grant record для нашої системи.
 
-Потрібно описати minimum quality contract для `grants`.
+Потрібно описати minimum quality contract для `grants` і розділити поля на три рівні.
 
-Обов'язкові поля:
+### Core Fields
+
+Ці поля потрібні майже завжди. Без них record важко використовувати в системі:
 
 - `title`;
 - `source_url`;
@@ -134,7 +157,9 @@ Acceptance:
 - `needs_manual_review`;
 - `manual_review_reason`, якщо потрібна ручна перевірка.
 
-Бажані поля:
+### Important But Optional Fields
+
+Ці поля дуже корисні для matching і dashboard, але не всі джерела можуть дати їх надійно:
 
 - `deadline_at`;
 - `deadline_text`;
@@ -148,12 +173,41 @@ Acceptance:
 - `application_url`;
 - `source_published_at`.
 
+Їх треба витягувати, коли source реально дає достатньо даних. Не треба заповнювати ці поля шумом або припущенням тільки для того, щоб поле не було пустим.
+
+### Advanced / Enrichment Fields
+
+Ці поля покращують matching, scoring і AI-рекомендації, але не мають бути required для ingestion:
+
+- `funding_amount_min`;
+- `funding_amount_max`;
+- `opportunity_type`;
+- `program_name`;
+- `keywords`;
+- `restrictions_text`;
+- `cofinancing_required`;
+- `cofinancing_text`;
+- `consortium_required`;
+- `consortium_text`;
+- `implementation_period_text`;
+- `contact_text`;
+- `documents`;
+- `extraction_confidence`;
+- `extraction_metadata`;
+- `embedding`;
+- `embedding_text`;
+- `embedding_model`;
+- `embedded_at`.
+
+Ці поля можна покращувати пізніше через deterministic normalization або AI fallback.
+
 Потрібно визначити:
 
 - які поля є критичними;
 - які поля можуть бути пустими;
 - які пусті поля мають давати quality flag;
 - які пусті поля мають переводити record у manual review;
+- які поля не можна штучно заповнювати без source evidence;
 - які записи можна вважати non-grant;
 - які записи можна лишати як broader support program.
 
@@ -161,6 +215,7 @@ Acceptance:
 
 - quality contract описаний у документації;
 - contract можна використати в коді;
+- поля розділені на core, important optional і advanced/enrichment;
 - є список allowed statuses;
 - є список quality flags;
 - є список classification values;
@@ -316,7 +371,9 @@ quality_flags:
 
 Score має враховувати:
 
-- заповненість критичних полів;
+- заповненість core fields;
+- заповненість important optional fields;
+- відсутність advanced fields тільки як слабкий сигнал, а не як причина reject;
 - тип джерела;
 - classification;
 - duplicate risk;
