@@ -100,130 +100,94 @@ raw_grant_snapshots
 - не видаляємо raw data;
 - не приховуємо noise без пояснюваного статусу або flag.
 
-## Step 1: Audit Current Grant Data
+## Висновки З Live Audit Step 1
 
-Мета: зрозуміти, що реально лежить у `grants` після завершеного search stage.
+Step 1 показав, що app-level проблема зараз не тільки в незаповнених полях, а в ризику використати шумні записи в matching і рекомендаціях.
 
-Треба перевірити:
+Фактичний результат live audit на локальній Postgres БД:
 
-- скільки записів є по кожному source;
-- які поля часто пусті;
-- де `status = unknown`;
-- де немає `deadline_at`;
-- де немає `funder_name`;
-- де немає `funding_amount_text`;
-- де немає `currency`;
-- де немає `country` або `region`;
-- де немає `eligibility_text`;
-- скільки записів мають `needs_manual_review = true`;
-- які записи схожі на news, digest, article, webinar або broad finance page;
-- які джерела дають найбільше шуму;
-- які джерела дають найкращу заповненість.
+- total grants: `419`;
+- manual review: `275/419 (65.6%)`;
+- weak records: `419/419 (100.0%)`;
+- noise candidates: `236/419 (56.3%)`.
 
-Очікуваний результат:
+Наслідки для плану:
 
-- CLI або SQL audit report;
-- документація з фактичним станом `grants`;
-- список слабких полів;
-- список шумних джерел;
-- список джерел, які вже дають якісні records;
-- рішення, які поля нормалізувати першими.
+- quality contract має бути app-facing, а не тільки field-completeness checklist;
+- noise classification і matching gate мають бути визначені до глибокої нормалізації;
+- `funder_name`, `regions`, `application_url`, `published_at` не можна робити hard-required для всіх sources, бо це відкине майже весь dataset;
+- відсутність цих fields має давати quality flags, lower score або manual review, але не автоматичний reject;
+- matching має брати тільки записи, які не classified як noise і мають minimum usable context.
 
-Acceptance:
+Source-level strategy з audit:
 
-- audit запускається локально;
-- audit показує статистику по source;
-- audit показує field completeness;
-- audit показує manual review ratio;
-- audit показує noise candidates;
-- результати перенесені в `implemented_for_data.md`.
+- direct/structured або відносно чисті sources:
+  - `diia-business`;
+  - `eu-funding`.
+- useful but incomplete sources:
+  - `chas-zmin`;
+  - `grant-market`;
+  - `prostir`.
+- noisy або digest-heavy sources, які потребують раннього classification gate:
+  - `nipo`;
+  - `hromady`;
+  - `fundsforngos`;
+  - `opportunitydesk`;
+  - `eufundingportal-eu`.
+- empty/problem source у поточному dataset:
+  - `gurt`.
 
-## Step 2: Define Grant Quality Contract
+## Step 3: Noise Classification And Matching Gate
 
-Мета: визначити, що таке якісний grant record для нашої системи.
+Мета: рано відокремити справжні grant/support opportunities від шуму, щоб app і matching не працювали по news/digest/webinar/event/article records.
 
-Потрібно описати minimum quality contract для `grants` і розділити поля на три рівні.
+Цей крок піднятий перед глибокою нормалізацією, бо live audit показав `236/419 (56.3%)` noise candidates.
 
-### Core Fields
+Класифікації:
 
-Ці поля потрібні майже завжди. Без них record важко використовувати в системі:
+- `grant`;
+- `business_support`;
+- `finance_program`;
+- `opportunity`;
+- `digest`;
+- `news`;
+- `article`;
+- `event`;
+- `webinar`;
+- `training`;
+- `tender`;
+- `unknown`.
 
-- `title`;
-- `source_url`;
-- `source_id`;
-- `source_slug`;
-- `summary` або інший достатній text field;
-- `status` у дозволеному форматі;
-- `needs_manual_review`;
-- `manual_review_reason`, якщо потрібна ручна перевірка.
+Потрібно реалізувати:
 
-### Important But Optional Fields
+- deterministic rules для очевидного noise;
+- source-specific hints для шумних джерел;
+- manual review reason для непевних records;
+- окремий flag/tier для records, які не треба використовувати в matching;
+- matching gate, який може відфільтрувати `noise_rejected` і `needs_review` без видалення raw data.
 
-Ці поля дуже корисні для matching і dashboard, але не всі джерела можуть дати їх надійно:
+Особливо перевірити:
 
-- `deadline_at`;
-- `deadline_text`;
-- `funder_name`;
-- `funding_amount_text`;
-- `currency`;
-- `country`;
-- `region`;
-- `support_type`;
-- `eligibility_text`;
-- `application_url`;
-- `source_published_at`.
-
-Їх треба витягувати, коли source реально дає достатньо даних. Не треба заповнювати ці поля шумом або припущенням тільки для того, щоб поле не було пустим.
-
-### Advanced / Enrichment Fields
-
-Ці поля покращують matching, scoring і AI-рекомендації, але не мають бути required для ingestion:
-
-- `funding_amount_min`;
-- `funding_amount_max`;
-- `opportunity_type`;
-- `program_name`;
-- `keywords`;
-- `restrictions_text`;
-- `cofinancing_required`;
-- `cofinancing_text`;
-- `consortium_required`;
-- `consortium_text`;
-- `implementation_period_text`;
-- `contact_text`;
-- `documents`;
-- `extraction_confidence`;
-- `extraction_metadata`;
-- `embedding`;
-- `embedding_text`;
-- `embedding_model`;
-- `embedded_at`.
-
-Ці поля можна покращувати пізніше через deterministic normalization або AI fallback.
-
-Потрібно визначити:
-
-- які поля є критичними;
-- які поля можуть бути пустими;
-- які пусті поля мають давати quality flag;
-- які пусті поля мають переводити record у manual review;
-- які поля не можна штучно заповнювати без source evidence;
-- які записи можна вважати non-grant;
-- які записи можна лишати як broader support program.
+- `nipo`;
+- `hromady`;
+- `prostir`;
+- `fundsforngos`;
+- `opportunitydesk`;
+- `eufundingportal-eu`;
+- `grant-market`.
 
 Acceptance:
 
-- quality contract описаний у документації;
-- contract можна використати в коді;
-- поля розділені на core, important optional і advanced/enrichment;
-- є список allowed statuses;
-- є список quality flags;
-- є список classification values;
-- є правила для manual review.
+- noisy records не потрапляють у prepared matching set без flag/tier;
+- classification пояснювана;
+- є tests для digest/news/webinar/article/event/training cases;
+- source-specific noise behavior покритий tests;
+- зміни не ламають існуючий ingestion;
+- raw records не видаляються.
 
-## Step 3: Normalize Critical Fields
+## Step 4: Normalize Critical Fields
 
-Мета: привести ключові поля `grants` до стабільного формату.
+Мета: привести ключові поля `grants` до стабільного формату для records, які не відкинуті раннім noise gate.
 
 Поля для нормалізації:
 
@@ -249,14 +213,17 @@ Acceptance:
 - support type inference;
 - eligibility cleanup.
 
+Normalization не має вигадувати дані без source evidence. Якщо поле не можна витягнути надійно, record отримує quality flag, lower score або manual review reason.
+
 Acceptance:
 
 - нормалізація покрита tests;
 - зміни не ламають існуючий ingestion;
 - raw value не губиться, якщо normalized value непевний;
-- weak records отримують manual review reason або quality flag.
+- weak records отримують manual review reason або quality flag;
+- global hard requirement не вводиться для `funder_name`, `regions`, `application_url`, `published_at`.
 
-## Step 4: Deduplication
+## Step 5: Deduplication
 
 Мета: знайти дублікати між джерелами і всередині одного джерела.
 
@@ -283,37 +250,6 @@ Acceptance:
 - duplicate candidates можна перевірити;
 - є tests на exact і fuzzy duplicate cases;
 - matching layer може ігнорувати duplicate records або використовувати primary.
-
-## Step 5: Noise Classification
-
-Мета: відокремити справжні гранти від шуму.
-
-Класифікації:
-
-- `grant`;
-- `business_support`;
-- `finance_program`;
-- `opportunity`;
-- `digest`;
-- `news`;
-- `article`;
-- `event`;
-- `webinar`;
-- `unknown`.
-
-Потрібно реалізувати:
-
-- deterministic rules для очевидного noise;
-- source-specific hints для шумних джерел;
-- manual review reason для непевних records;
-- окремий flag для records, які не треба використовувати в matching.
-
-Acceptance:
-
-- noisy records не потрапляють у prepared matching set без flag;
-- classification пояснювана;
-- є tests для digest/news/webinar/article cases;
-- `hromady`, `nipo`, `fundsforngos`, `opportunitydesk` перевірені окремо.
 
 ## Step 6: AI Fallback For Extraction
 
@@ -361,12 +297,19 @@ quality_flags:
   - missing_amount
   - missing_funder
   - missing_country
+  - missing_region
   - missing_eligibility
+  - missing_application_url
+  - missing_published_at
   - broad_finance_program
   - possible_digest
   - possible_news
+  - possible_event
+  - possible_webinar
+  - possible_training
   - possible_duplicate
   - needs_manual_review
+  - noise_rejected
 ```
 
 Score має враховувати:
@@ -403,7 +346,7 @@ Acceptance:
 Початкова рекомендація:
 
 - не створювати окрему таблицю одразу;
-- спочатку додати audit, quality contract, normalization, flags і score;
+- спочатку додати audit, quality contract, noise/matching gate, normalization, flags і score;
 - після цього вирішити, чи потрібна `prepared_grants`.
 
 Acceptance:
@@ -420,9 +363,9 @@ Acceptance:
 
 1. Поточні дані в `grants` проаудитовані.
 2. Quality contract визначений і задокументований.
-3. Критичні поля нормалізуються стабільно.
-4. Duplicate candidates виявляються і не гублять trace.
-5. Noise records класифікуються і не потрапляють у prepared matching set без flag.
+3. Noise records класифікуються і не потрапляють у prepared matching set без flag/tier.
+4. Критичні поля нормалізуються стабільно.
+5. Duplicate candidates виявляються і не гублять trace.
 6. AI fallback, якщо доданий, працює тільки як контрольований fallback, а не як перший шар.
 7. Кожен grant має quality score або documented reason, чому score не розрахований.
 8. Є prepared data layer або задокументоване рішення лишити prepared fields у `grants`.
@@ -431,10 +374,19 @@ Acceptance:
 
 ## Поточний Plan State
 
-Відкриті всі steps цього етапу.
+Step 1 і Step 2 виконані та перенесені у `implemented_for_data.md`.
+
+Відкриті steps:
+
+- Step 3: Noise Classification And Matching Gate;
+- Step 4: Normalize Critical Fields;
+- Step 5: Deduplication;
+- Step 6: AI Fallback For Extraction;
+- Step 7: Quality Score;
+- Step 8: Prepared Grants Layer.
 
 Перший рекомендований prompt для реалізації:
 
 ```text
-implement step 1 for data preparation
+implement step 3 for data preparation
 ```

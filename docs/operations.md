@@ -459,6 +459,16 @@ Expected result: `200 text/html` for pages and `200 text/css` for CSS.
 
 ## Inspect Saved Grant Fields
 
+Run data preparation Step 1 audit for normalized grant quality:
+
+```bash
+docker compose exec app grant-tool data-audit
+docker compose exec app grant-tool data-audit --source nipo
+docker compose exec app grant-tool data-audit --sample-limit 10
+```
+
+The audit is read-only. It reports source-level grant counts, status distribution, field completeness, manual review ratio, weak records and noise candidates.
+
 Show recent grants:
 
 ```bash

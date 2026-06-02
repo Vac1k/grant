@@ -90,6 +90,36 @@ class SearchQualityGateRow:
     samples: list[SearchQualityGrantSample]
 
 
+@dataclass(slots=True)
+class DataAuditFieldCompleteness:
+    field_name: str
+    populated_count: int
+    missing_count: int
+    total_count: int
+
+
+@dataclass(slots=True)
+class DataAuditGrantSample:
+    title: str
+    status: str
+    source_url: str
+    reasons: list[str]
+    manual_review_reason: str | None = None
+
+
+@dataclass(slots=True)
+class DataAuditSourceRow:
+    source_slug: str
+    grants_total: int
+    status_counts: dict[str, int]
+    manual_review_count: int
+    field_completeness: list[DataAuditFieldCompleteness]
+    weak_record_count: int
+    noise_candidate_count: int
+    weak_samples: list[DataAuditGrantSample]
+    noise_samples: list[DataAuditGrantSample]
+
+
 class GrantRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -549,6 +579,186 @@ class GrantRepository:
         if needs_manual_review is not None:
             query = query.where(Grant.needs_manual_review.is_(needs_manual_review))
         return int(self.session.scalar(query) or 0)
+
+    def data_audit_report(
+        self,
+        *,
+        source_slug: str | None = None,
+        sample_limit: int = 5,
+    ) -> list[DataAuditSourceRow]:
+        sources_query = select(Source).order_by(Source.slug)
+        if source_slug is not None:
+            sources_query = sources_query.where(Source.slug == source_slug)
+
+        rows: list[DataAuditSourceRow] = []
+        for source in self.session.scalars(sources_query):
+            grants = list(
+                self.session.scalars(
+                    select(Grant)
+                    .options(selectinload(Grant.source))
+                    .where(Grant.source_id == source.id)
+                    .order_by(Grant.updated_at.desc(), Grant.created_at.desc())
+                )
+            )
+            total = len(grants)
+            status_counts: dict[str, int] = {}
+            manual_review_count = 0
+            weak_count = 0
+            noise_count = 0
+            weak_samples: list[DataAuditGrantSample] = []
+            noise_samples: list[DataAuditGrantSample] = []
+
+            for grant in grants:
+                status = grant.status or "unknown"
+                status_counts[status] = status_counts.get(status, 0) + 1
+                if grant.needs_manual_review:
+                    manual_review_count += 1
+
+                weak_reasons = self._data_audit_weak_reasons(grant)
+                if weak_reasons:
+                    weak_count += 1
+                    if len(weak_samples) < sample_limit:
+                        weak_samples.append(self._data_audit_sample(grant, weak_reasons))
+
+                noise_reasons = self._data_audit_noise_reasons(grant)
+                if noise_reasons:
+                    noise_count += 1
+                    if len(noise_samples) < sample_limit:
+                        noise_samples.append(self._data_audit_sample(grant, noise_reasons))
+
+            field_completeness = [
+                DataAuditFieldCompleteness(
+                    field_name=field_name,
+                    populated_count=sum(1 for grant in grants if self._data_audit_field_populated(grant, field_name)),
+                    missing_count=sum(1 for grant in grants if not self._data_audit_field_populated(grant, field_name)),
+                    total_count=total,
+                )
+                for field_name in self._data_audit_field_names()
+            ]
+            rows.append(
+                DataAuditSourceRow(
+                    source_slug=source.slug,
+                    grants_total=total,
+                    status_counts=status_counts,
+                    manual_review_count=manual_review_count,
+                    field_completeness=field_completeness,
+                    weak_record_count=weak_count,
+                    noise_candidate_count=noise_count,
+                    weak_samples=weak_samples,
+                    noise_samples=noise_samples,
+                )
+            )
+        return rows
+
+    @staticmethod
+    def _data_audit_field_names() -> tuple[str, ...]:
+        return (
+            "source_url",
+            "title",
+            "status_known",
+            "summary_or_description",
+            "deadline_at",
+            "deadline_text",
+            "funder_name",
+            "funding_amount_text",
+            "currency",
+            "countries",
+            "regions",
+            "eligibility_text",
+            "application_url",
+            "published_at",
+        )
+
+    @staticmethod
+    def _data_audit_field_populated(grant: Grant, field_name: str) -> bool:
+        if field_name == "status_known":
+            return grant.status in {"open", "closed"}
+        if field_name == "summary_or_description":
+            return bool((grant.summary or "").strip() or (grant.description_text or "").strip())
+        if field_name in {"countries", "regions"}:
+            return bool(getattr(grant, field_name) or [])
+        value = getattr(grant, field_name)
+        if isinstance(value, str):
+            return bool(value.strip())
+        return value is not None
+
+    @staticmethod
+    def _data_audit_weak_reasons(grant: Grant) -> list[str]:
+        reasons: list[str] = []
+        title = (grant.title or "").strip()
+        source_url = (grant.source_url or "").strip()
+        if len(title) < 8:
+            reasons.append("weak_title")
+        if not source_url.startswith("http"):
+            reasons.append("missing_source_url")
+        if grant.status not in {"open", "closed"}:
+            reasons.append("status_unknown")
+        if not ((grant.summary or "").strip() or (grant.description_text or "").strip()):
+            reasons.append("missing_summary")
+        if grant.deadline_at is None:
+            reasons.append("missing_deadline")
+        if not (grant.funder_name or "").strip():
+            reasons.append("missing_funder")
+        if not (grant.funding_amount_text or "").strip():
+            reasons.append("missing_amount")
+        if not (grant.currency or "").strip():
+            reasons.append("missing_currency")
+        if not (grant.countries or []) and not (grant.regions or []) and not (grant.geography_text or "").strip():
+            reasons.append("missing_geography")
+        if not (grant.eligibility_text or "").strip():
+            reasons.append("missing_eligibility")
+        if grant.needs_manual_review:
+            reasons.append("needs_manual_review")
+        if grant.extraction_confidence is not None and Decimal(str(grant.extraction_confidence)) < Decimal("0.5000"):
+            reasons.append("low_extraction_confidence")
+        return reasons
+
+    @staticmethod
+    def _data_audit_noise_reasons(grant: Grant) -> list[str]:
+        title = (grant.title or "").lower()
+        text = " ".join(
+            part
+            for part in (
+                grant.title,
+                grant.summary,
+                grant.description_text,
+                grant.opportunity_type,
+                grant.support_type,
+            )
+            if part
+        ).lower()
+        reasons: list[str] = []
+        terms = {
+            "possible_digest": ("digest", "дайджест", "добірка", "opportunities currently open", "opportunities closing"),
+            "possible_news": ("news", "новин", "підсумк", "відбулася", "долучився", "долучилась"),
+            "possible_article": ("article", "стаття", "як використовувати", "guide", "гайд"),
+            "possible_webinar": ("webinar", "вебінар"),
+            "possible_event": ("event", "подія", "conference", "конференц", "воркшоп", "workshop"),
+        }
+        for reason, markers in terms.items():
+            if any(marker in text for marker in markers):
+                reasons.append(reason)
+
+        training_title = any(marker in title for marker in ("тренінг", "training", "course", "курс", "семінар"))
+        grant_title = any(marker in title for marker in ("grant", "грант", "конкурс", "call for proposals"))
+        if training_title and not grant_title:
+            reasons.append("possible_training_not_grant")
+
+        if grant.opportunity_type in {"training", "tender"}:
+            reasons.append(f"unsupported_opportunity_type:{grant.opportunity_type}")
+        if grant.support_type in {"training", "procurement"}:
+            reasons.append(f"unsupported_support_type:{grant.support_type}")
+        return list(dict.fromkeys(reasons))
+
+    @staticmethod
+    def _data_audit_sample(grant: Grant, reasons: list[str]) -> DataAuditGrantSample:
+        return DataAuditGrantSample(
+            title=grant.title,
+            status=grant.status,
+            source_url=grant.source_url,
+            reasons=reasons,
+            manual_review_reason=grant.manual_review_reason,
+        )
 
     def search_quality_gate_report(
         self,

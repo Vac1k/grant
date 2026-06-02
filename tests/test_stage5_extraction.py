@@ -82,7 +82,7 @@ class Stage5ExtractionTestCase(unittest.TestCase):
             source_url="https://www.prostir.ua/?grants=tochka-startu",
             title="Точка старту: 3-денний тренінг для молоді",
             description_text=(
-                "Актуально до: 25.05.26. SILab Ukraine запрошує на 3-денний тренінг "
+                "Актуально до: 25.12.26. SILab Ukraine запрошує на 3-денний тренінг "
                 "для молоді з підприємництва."
             ),
             opportunity_type="grant",
@@ -92,7 +92,7 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         FeatureExtractionService().enrich_draft(draft, source_slug="prostir")
 
         self.assertEqual(draft.status, "open")
-        self.assertEqual(draft.deadline_at.date().isoformat(), "2026-05-25")
+        self.assertEqual(draft.deadline_at.date().isoformat(), "2026-12-25")
         self.assertEqual(draft.opportunity_type, "training")
         self.assertEqual(draft.support_type, "training")
 

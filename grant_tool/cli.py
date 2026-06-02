@@ -6,7 +6,7 @@ from pathlib import Path
 
 from grant_tool.client_import import ImportResult, import_application_history, import_client_profiles
 from grant_tool.config import get_settings
-from grant_tool.db.repositories import GrantRepository, SearchQualityGateRow, SearchSourceReportRow
+from grant_tool.db.repositories import DataAuditSourceRow, GrantRepository, SearchQualityGateRow, SearchSourceReportRow
 from grant_tool.db.session import SessionLocal
 from grant_tool.embeddings import EmbeddingService, EmbeddingTarget
 from grant_tool.explanations import MatchExplanationService
@@ -174,6 +174,83 @@ def _cmd_quality_gate(args: argparse.Namespace) -> None:
     required_rows = [row for row in rows if row.required]
     if not args.no_fail and any(not row.passed for row in required_rows):
         raise SystemExit(1)
+
+
+def _format_count_percent(count: int, total: int) -> str:
+    if total <= 0:
+        return "0/0 (0.0%)"
+    return f"{count}/{total} ({(count / total) * 100:.1f}%)"
+
+
+def _format_data_audit_report(rows: list[DataAuditSourceRow]) -> list[str]:
+    if not rows:
+        return ["No sources found"]
+
+    total_grants = sum(row.grants_total for row in rows)
+    total_manual = sum(row.manual_review_count for row in rows)
+    total_weak = sum(row.weak_record_count for row in rows)
+    total_noise = sum(row.noise_candidate_count for row in rows)
+    lines = [
+        "Grant data audit",
+        (
+            f"totals: grants={total_grants} "
+            f"manual_review={_format_count_percent(total_manual, total_grants)} "
+            f"weak_records={_format_count_percent(total_weak, total_grants)} "
+            f"noise_candidates={_format_count_percent(total_noise, total_grants)}"
+        ),
+    ]
+
+    for row in rows:
+        status_counts = ", ".join(f"{status}={count}" for status, count in sorted(row.status_counts.items())) or "-"
+        completeness = "; ".join(
+            f"{field.field_name}={_format_count_percent(field.populated_count, field.total_count)}"
+            for field in row.field_completeness
+        )
+        weakest_fields = sorted(
+            row.field_completeness,
+            key=lambda field: (field.populated_count / field.total_count) if field.total_count else 1,
+        )[:5]
+        weakest_field_text = ", ".join(
+            f"{field.field_name} {field.missing_count} missing"
+            for field in weakest_fields
+            if field.missing_count
+        ) or "none"
+
+        lines.extend(
+            [
+                "",
+                f"source: {row.source_slug}",
+                f"  grants: {row.grants_total}",
+                f"  status: {status_counts}",
+                f"  manual review: {_format_count_percent(row.manual_review_count, row.grants_total)}",
+                f"  weak records: {_format_count_percent(row.weak_record_count, row.grants_total)}",
+                f"  noise candidates: {_format_count_percent(row.noise_candidate_count, row.grants_total)}",
+                f"  weakest fields: {weakest_field_text}",
+                f"  completeness: {completeness}",
+            ]
+        )
+
+        if row.weak_samples:
+            lines.append("  weak samples:")
+            for sample in row.weak_samples:
+                reason_text = ", ".join(sample.reasons)
+                review_text = f" | review: {sample.manual_review_reason}" if sample.manual_review_reason else ""
+                lines.append(f"    - {sample.title[:100]} [{sample.status}]: {reason_text}{review_text} | {sample.source_url}")
+        if row.noise_samples:
+            lines.append("  noise samples:")
+            for sample in row.noise_samples:
+                reason_text = ", ".join(sample.reasons)
+                lines.append(f"    - {sample.title[:100]} [{sample.status}]: {reason_text} | {sample.source_url}")
+    return lines
+
+
+def _cmd_data_audit(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        rows = repository.data_audit_report(source_slug=args.source, sample_limit=args.sample_limit)
+
+    for line in _format_data_audit_report(rows):
+        print(line)
 
 
 def _print_import_result(label: str, result: ImportResult) -> None:
@@ -351,6 +428,11 @@ def _build_parser() -> argparse.ArgumentParser:
     quality_gate.add_argument("--sample-limit", type=int, default=10)
     quality_gate.add_argument("--no-fail", action="store_true", help="Print report without non-zero exit on blocked gate")
     quality_gate.set_defaults(func=_cmd_quality_gate)
+
+    data_audit = subparsers.add_parser("data-audit", help="Audit normalized grant data quality")
+    data_audit.add_argument("--source", default=None, help="Optional source slug")
+    data_audit.add_argument("--sample-limit", type=int, default=5)
+    data_audit.set_defaults(func=_cmd_data_audit)
 
     import_clients = subparsers.add_parser("import-clients", help="Import client profiles from CSV")
     import_clients.add_argument("--file", type=Path, default=DEFAULT_CLIENTS_FILE)
