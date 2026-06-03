@@ -183,6 +183,92 @@ class DataQualityContractTestCase(unittest.TestCase):
         self.assertIn(QualityFlag.NOISE_REJECTED, evaluation.flags)
         self.assertIn(ManualReviewRule.NOISE_OR_NON_GRANT, evaluation.manual_review_rules)
 
+    def test_deterministic_text_classifies_digest_webinar_event_news_and_article_noise(self) -> None:
+        source = self.repository.upsert_source(
+            slug="hromady",
+            name="Hromady",
+            base_url="https://hromady.org",
+            access_strategy=AccessStrategy.WP_REST,
+        )
+        cases = [
+            ("digest", "Грантовий гід: добірка конкурсів та грантових можливостей", GrantClassification.DIGEST),
+            ("webinar", "Кроки розвитку громад розглянемо під час вебінару", GrantClassification.WEBINAR),
+            ("event", "Варшава - ReBuild Ukraine: Construction & Energy conference", GrantClassification.EVENT),
+            ("news", "IP офіс зареєстрував авторське право на комп’ютерну програму", GrantClassification.NEWS),
+            ("article", "Як підготувати заявку: поради для стартапів", GrantClassification.ARTICLE),
+        ]
+
+        for record_id, title, expected_classification in cases:
+            with self.subTest(record_id=record_id):
+                grant = self.repository.upsert_grant(
+                    source_id=source.id,
+                    source_record_id=record_id,
+                    source_url=f"https://hromady.org/{record_id}",
+                    title=title,
+                    summary="Informational post for communities.",
+                    status="unknown",
+                    countries=["Ukraine"],
+                )
+
+                evaluation = evaluate_grant_quality_contract(grant)
+
+                self.assertEqual(evaluation.classification, expected_classification)
+                self.assertEqual(evaluation.tier, GrantQualityTier.NOISE_REJECTED)
+                self.assertFalse(evaluation.matching_eligible)
+                self.assertIn(QualityFlag.NOISE_REJECTED, evaluation.flags)
+                self.assertTrue(evaluation.classification_reasons)
+
+    def test_direct_grant_language_wins_over_generic_source_noise_risk(self) -> None:
+        source = self.repository.upsert_source(
+            slug="prostir",
+            name="Prostir",
+            base_url="https://www.prostir.ua",
+            access_strategy=AccessStrategy.RSS,
+        )
+        grant = self.repository.upsert_grant(
+            source_id=source.id,
+            source_url="https://www.prostir.ua/grants/direct-call",
+            title="Конкурс грантів для підтримки ГО в реалізації проектів",
+            summary="Оголошено прийом заявок на фінансування проектів громадських організацій.",
+            status="open",
+            deadline_text="до 31 грудня 2026",
+            funding_amount_text="до 20000 GBP",
+            countries=["Ukraine"],
+            opportunity_type=None,
+            support_type=None,
+        )
+
+        evaluation = evaluate_grant_quality_contract(grant)
+
+        self.assertEqual(evaluation.classification, GrantClassification.GRANT)
+        self.assertNotEqual(evaluation.tier, GrantQualityTier.NOISE_REJECTED)
+        self.assertTrue(evaluation.matching_eligible)
+        self.assertIn("text:direct_grant_signal", evaluation.classification_reasons)
+
+    def test_digest_heavy_unknown_records_need_review_before_matching(self) -> None:
+        source = self.repository.upsert_source(
+            slug="nipo",
+            name="NIPO",
+            base_url="https://nipo.gov.ua",
+            access_strategy=AccessStrategy.WP_REST,
+        )
+        grant = self.repository.upsert_grant(
+            source_id=source.id,
+            source_url="https://nipo.gov.ua/ambiguous",
+            title="IP Management Clinics вперше в Україні",
+            summary="Програма підтримки компаній із консультаціями щодо інтелектуальної власності.",
+            status="unknown",
+            countries=["Ukraine"],
+        )
+
+        evaluation = evaluate_grant_quality_contract(grant)
+
+        self.assertEqual(evaluation.classification, GrantClassification.UNKNOWN)
+        self.assertEqual(evaluation.tier, GrantQualityTier.NEEDS_REVIEW)
+        self.assertFalse(evaluation.matching_eligible)
+        self.assertIn(QualityFlag.SOURCE_CLASSIFICATION_UNCERTAIN, evaluation.flags)
+        self.assertIn(ManualReviewRule.SOURCE_CLASSIFICATION_UNCERTAIN, evaluation.manual_review_rules)
+
     def test_closed_records_are_usable_but_not_active_matching_candidates(self) -> None:
         source = self.repository.upsert_source(
             slug="eu-funding",

@@ -206,6 +206,60 @@ class Stage6MatchingTestCase(unittest.TestCase):
         self.assertEqual(summary.clients_count, 1)
         self.assertEqual(saved_count, 1)
 
+    def test_stage6_quality_gate_filters_deterministic_noise(self) -> None:
+        client = self.repository.upsert_client_profile(
+            slug="ukrainian-ai-company",
+            name="Ukrainian AI Company",
+            country="Ukraine",
+            organization_type="company",
+            technologies=["AI"],
+            target_topics=["AI", "innovation"],
+        )
+        clean_grant = self.repository.upsert_grant(
+            source_id=self.source.id,
+            source_url="https://example.org/direct-grant",
+            title="Open call for AI innovation grants",
+            summary="Funding for Ukrainian companies building AI products.",
+            status="open",
+            deadline_at=datetime(2026, 12, 31, tzinfo=UTC),
+            countries=["Ukraine"],
+            applicant_types=["company"],
+            topics=["AI", "innovation"],
+        )
+        noisy_grant = self.repository.upsert_grant(
+            source_id=self.source.id,
+            source_url="https://example.org/webinar",
+            title="AI webinar for innovation teams",
+            summary="Online seminar for teams interested in AI innovation.",
+            status="open",
+            deadline_at=datetime(2026, 12, 31, tzinfo=UTC),
+            countries=["Ukraine"],
+            applicant_types=["company"],
+            topics=["AI", "innovation"],
+        )
+
+        clean_candidate = ShortlistMatchingService(repository=self.repository).score(
+            grant=clean_grant,
+            client=client,
+        )
+        noisy_candidate = ShortlistMatchingService(repository=self.repository).score(
+            grant=noisy_grant,
+            client=client,
+        )
+        summary = ShortlistMatchingService(repository=self.repository).run(top_n=5, min_score=Decimal("0.1000"))
+        noisy_match = self.session.scalar(select(GrantClientMatch).where(GrantClientMatch.grant_id == noisy_grant.id))
+
+        self.assertTrue(clean_candidate.hard_filter_passed)
+        self.assertFalse(noisy_candidate.hard_filter_passed)
+        self.assertIn("quality_gate:noise_rejected:webinar", noisy_candidate.filter_reasons)
+        self.assertEqual(noisy_candidate.evidence["quality"]["classification"], "webinar")
+        self.assertEqual(noisy_candidate.evidence["quality"]["tier"], "noise_rejected")
+        self.assertEqual(summary.clients_count, 1)
+        self.assertEqual(summary.grants_count, 2)
+        self.assertEqual(summary.evaluated_count, 2)
+        self.assertEqual(summary.saved_count, 1)
+        self.assertIsNone(noisy_match)
+
 
 if __name__ == "__main__":
     unittest.main()

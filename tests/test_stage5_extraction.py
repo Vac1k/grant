@@ -64,6 +64,49 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertIn("feature_card", draft.extraction_metadata)
         self.assertGreaterEqual(draft.extraction_confidence, 0)
 
+    def test_step4_normalization_is_applied_during_enrichment(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://chaszmin.com.ua/do-20-000-funtiv-granty-acted/",
+            title="До 20 000 фунтів - гранти для ГО (ACTED)",
+            status="active",
+            deadline_text="Актуально до: 25.12.26 Зафіксувати у Google календарі",
+            description_text=(
+                "Грант для громадських організацій у Харківській області, Україна. "
+                "Сума: до 20 000 фунтів. До участі допускаються ГО."
+            ),
+            support_type="grant",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="chas-zmin")
+
+        self.assertEqual(draft.status, "open")
+        self.assertEqual(draft.deadline_at.date().isoformat(), "2026-12-25")
+        self.assertEqual(draft.deadline_text, "Актуально до: 25.12.26")
+        self.assertEqual(draft.currency, "GBP")
+        self.assertEqual(str(draft.funding_amount_max), "20000.00")
+        self.assertEqual(draft.funder_name, "ACTED")
+        self.assertIn("Kharkiv", draft.regions)
+        self.assertIn("Ukraine", draft.countries)
+        self.assertEqual(draft.support_type, "grant")
+        self.assertEqual(draft.opportunity_type, "grant")
+        self.assertEqual(
+            draft.extraction_metadata["data_preparation_normalization_version"],
+            "data-preparation-step4-v1",
+        )
+        self.assertIn("normalized_fields", draft.extraction_metadata)
+
+    def test_cad_currency_alias_is_not_treated_as_usd(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/canada",
+            title="Canadian support grant",
+            description_text="Funding up to C$ 25,000 for Ukrainian organizations.",
+        )
+
+        FeatureExtractionService().enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(draft.currency, "CAD")
+        self.assertEqual(str(draft.funding_amount_max), "25000.00")
+
     def test_generic_title_is_recovered_from_url_and_marked_for_review(self) -> None:
         draft = NormalizedGrantDraft(
             source_url="https://business.diia.gov.ua/finance/programs/programa_es_gorizont_evropa_2021_2027",

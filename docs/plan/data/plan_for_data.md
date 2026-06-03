@@ -137,91 +137,35 @@ Source-level strategy з audit:
 - empty/problem source у поточному dataset:
   - `gurt`.
 
-## Step 3: Noise Classification And Matching Gate
+## Manual Review І Додаткова Нормалізація
 
-Мета: рано відокремити справжні grant/support opportunities від шуму, щоб app і matching не працювали по news/digest/webinar/event/article records.
+Manual review не є блокером для Step 5.
 
-Цей крок піднятий перед глибокою нормалізацією, бо live audit показав `236/419 (56.3%)` noise candidates.
+Поточний Data Preparation flow має йти так:
 
-Класифікації:
+```text
+Step 4 normalization rules
+  -> Step 5 duplicate detection
+  -> repeat audit / quality report
+  -> decide if more normalization is needed
+  -> manual review workflow for remaining ambiguous records
+```
 
-- `grant`;
-- `business_support`;
-- `finance_program`;
-- `opportunity`;
-- `digest`;
-- `news`;
-- `article`;
-- `event`;
-- `webinar`;
-- `training`;
-- `tender`;
-- `unknown`.
+Ручна перевірка не означає, що потрібно зараз руками чистити всі weak records у БД.
 
-Потрібно реалізувати:
+Правильне правило:
 
-- deterministic rules для очевидного noise;
-- source-specific hints для шумних джерел;
-- manual review reason для непевних records;
-- окремий flag/tier для records, які не треба використовувати в matching;
-- matching gate, який може відфільтрувати `noise_rejected` і `needs_review` без видалення raw data.
+- deterministic rules мають автоматично нормалізувати те, що можна зробити надійно;
+- непевні records отримують `needs_manual_review`, quality flag або review reason;
+- manual review має бути окремим admin/dashboard workflow, а не ad-hoc редагуванням таблиці;
+- додаткова нормалізація додається тільки після повторного audit, коли видно конкретний повторюваний pattern;
+- records, classified як noise/non-grant, не видаляються одразу, а soft-rejected через tier/flag/gate.
 
-Особливо перевірити:
+Наслідок для поточного плану:
 
-- `nipo`;
-- `hromady`;
-- `prostir`;
-- `fundsforngos`;
-- `opportunitydesk`;
-- `eufundingportal-eu`;
-- `grant-market`.
-
-Acceptance:
-
-- noisy records не потрапляють у prepared matching set без flag/tier;
-- classification пояснювана;
-- є tests для digest/news/webinar/article/event/training cases;
-- source-specific noise behavior покритий tests;
-- зміни не ламають існуючий ingestion;
-- raw records не видаляються.
-
-## Step 4: Normalize Critical Fields
-
-Мета: привести ключові поля `grants` до стабільного формату для records, які не відкинуті раннім noise gate.
-
-Поля для нормалізації:
-
-- `status`;
-- `deadline_at`;
-- `deadline_text`;
-- `funding_amount_text`;
-- `currency`;
-- `country`;
-- `region`;
-- `funder_name`;
-- `support_type`;
-- `eligibility_text`.
-
-Потрібно реалізувати:
-
-- нормалізацію статусів до `open`, `closed`, `unknown`;
-- deadline parser для типових форматів;
-- extraction currency з amount text;
-- очищення amount text від зайвого HTML/text noise;
-- source-level fallback для funder, якщо сайт не дає окремий funder;
-- basic country/region inference;
-- support type inference;
-- eligibility cleanup.
-
-Normalization не має вигадувати дані без source evidence. Якщо поле не можна витягнути надійно, record отримує quality flag, lower score або manual review reason.
-
-Acceptance:
-
-- нормалізація покрита tests;
-- зміни не ламають існуючий ingestion;
-- raw value не губиться, якщо normalized value непевний;
-- weak records отримують manual review reason або quality flag;
-- global hard requirement не вводиться для `funder_name`, `regions`, `application_url`, `published_at`.
+- Step 5 можна починати без ручного review всіх записів;
+- після Step 5 треба знову запустити audit і подивитися, які fields або source-specific patterns ще потребують normalization;
+- manual review UI/workflow логічно належить до Step 8 або окремого post-data production readiness stage.
 
 ## Step 5: Deduplication
 
@@ -374,12 +318,10 @@ Acceptance:
 
 ## Поточний Plan State
 
-Step 1 і Step 2 виконані та перенесені у `implemented_for_data.md`.
+Step 1, Step 2, Step 3 і Step 4 виконані та перенесені у `implemented_for_data.md`.
 
 Відкриті steps:
 
-- Step 3: Noise Classification And Matching Gate;
-- Step 4: Normalize Critical Fields;
 - Step 5: Deduplication;
 - Step 6: AI Fallback For Extraction;
 - Step 7: Quality Score;
@@ -388,5 +330,5 @@ Step 1 і Step 2 виконані та перенесені у `implemented_for_
 Перший рекомендований prompt для реалізації:
 
 ```text
-implement step 3 for data preparation
+implement step 5 for data preparation
 ```

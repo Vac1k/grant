@@ -60,6 +60,7 @@ class QualityFlag(StrEnum):
     POSSIBLE_TRAINING = "possible_training"
     POSSIBLE_TENDER = "possible_tender"
     POSSIBLE_DUPLICATE = "possible_duplicate"
+    SOURCE_CLASSIFICATION_UNCERTAIN = "source_classification_uncertain"
     NEEDS_MANUAL_REVIEW = "needs_manual_review"
     LOW_EXTRACTION_CONFIDENCE = "low_extraction_confidence"
     NOISE_REJECTED = "noise_rejected"
@@ -71,6 +72,7 @@ class ManualReviewRule(StrEnum):
     INVALID_STATUS = "invalid_status"
     LOW_EXTRACTION_CONFIDENCE = "low_extraction_confidence"
     NOISE_OR_NON_GRANT = "noise_or_non_grant"
+    SOURCE_CLASSIFICATION_UNCERTAIN = "source_classification_uncertain"
 
 
 class SourceFamily(StrEnum):
@@ -179,6 +181,7 @@ class GrantQualityContract:
 class GrantQualityEvaluation:
     tier: GrantQualityTier
     classification: GrantClassification
+    classification_reasons: tuple[str, ...]
     flags: tuple[QualityFlag, ...]
     manual_review_rules: tuple[ManualReviewRule, ...]
     matching_eligible: bool
@@ -213,8 +216,8 @@ def evaluate_grant_quality_contract(
     title = clean_text(getattr(grant, "title", None)) or ""
     source_url = clean_text(getattr(grant, "source_url", None)) or ""
     status = clean_text(getattr(grant, "status", None)) or GrantStatus.UNKNOWN.value
-    classification = _classification_for_grant(grant)
     source_family = contract.source_family_by_slug.get(_source_slug(grant) or "", SourceFamily.UNKNOWN)
+    classification, classification_reasons = _classification_for_grant(grant, source_family=source_family)
 
     if len(title) < 8:
         _append_once(flags, QualityFlag.WEAK_TITLE)
@@ -257,6 +260,11 @@ def evaluate_grant_quality_contract(
         _append_once(manual_review_rules, ManualReviewRule.NOISE_OR_NON_GRANT)
         matching_blockers.append(QualityFlag.NOISE_REJECTED.value)
 
+    if _needs_source_classification_review(classification, source_family, flags):
+        _append_once(flags, QualityFlag.SOURCE_CLASSIFICATION_UNCERTAIN)
+        _append_once(manual_review_rules, ManualReviewRule.SOURCE_CLASSIFICATION_UNCERTAIN)
+        matching_blockers.append(QualityFlag.SOURCE_CLASSIFICATION_UNCERTAIN.value)
+
     core_complete = not any(
         blocker
         in {
@@ -277,6 +285,7 @@ def evaluate_grant_quality_contract(
         or QualityFlag.WEAK_TITLE in flags
         or QualityFlag.MISSING_SOURCE_URL in flags
         or QualityFlag.LOW_EXTRACTION_CONFIDENCE in flags
+        or QualityFlag.SOURCE_CLASSIFICATION_UNCERTAIN in flags
     ):
         tier = GrantQualityTier.NEEDS_REVIEW
     elif _has_only_soft_warnings(flags):
@@ -289,6 +298,7 @@ def evaluate_grant_quality_contract(
     return GrantQualityEvaluation(
         tier=tier,
         classification=classification,
+        classification_reasons=classification_reasons,
         flags=tuple(flags),
         manual_review_rules=tuple(manual_review_rules),
         matching_eligible=matching_eligible,
@@ -299,18 +309,22 @@ def evaluate_grant_quality_contract(
     )
 
 
-def _classification_for_grant(grant: Any) -> GrantClassification:
-    values = [
-        _metadata_value(getattr(grant, "extraction_metadata", None), "classification"),
-        _metadata_value(getattr(grant, "source_metadata", None), "classification"),
-        getattr(grant, "opportunity_type", None),
-        getattr(grant, "support_type", None),
-    ]
-    for value in values:
+def _classification_for_grant(grant: Any, *, source_family: SourceFamily) -> tuple[GrantClassification, tuple[str, ...]]:
+    values = (
+        ("extraction_metadata.classification", _metadata_value(getattr(grant, "extraction_metadata", None), "classification")),
+        ("source_metadata.classification", _metadata_value(getattr(grant, "source_metadata", None), "classification")),
+        ("opportunity_type", getattr(grant, "opportunity_type", None)),
+        ("support_type", getattr(grant, "support_type", None)),
+    )
+    for field_name, value in values:
         classification = _classification_from_value(value)
         if classification is not None:
-            return classification
-    return GrantClassification.UNKNOWN
+            if classification == GrantClassification.UNKNOWN:
+                break
+            return classification, (f"explicit:{field_name}:{classification.value}",)
+
+    inferred, reasons = _classify_from_text(grant, source_family=source_family)
+    return inferred, reasons
 
 
 def _classification_from_value(value: Any) -> GrantClassification | None:
@@ -351,6 +365,207 @@ def _metadata_value(metadata: Any, key: str) -> Any:
     return None
 
 
+def _classify_from_text(grant: Any, *, source_family: SourceFamily) -> tuple[GrantClassification, tuple[str, ...]]:
+    title = clean_text(getattr(grant, "title", None)) or ""
+    summary = clean_text(getattr(grant, "summary", None)) or ""
+    description = clean_text(getattr(grant, "description_text", None)) or ""
+    deadline_text = clean_text(getattr(grant, "deadline_text", None)) or ""
+    funding_text = clean_text(getattr(grant, "funding_amount_text", None)) or ""
+    funder = clean_text(getattr(grant, "funder_name", None)) or ""
+    title_text = f" {title.lower()} "
+    text = f" {title} {summary} {description} {deadline_text} {funding_text} {funder} ".lower()
+
+    direct_grant_signal = _contains_any(
+        text,
+        (
+            "grant",
+            "grants",
+            "грант",
+            "грантов",
+            "call for proposals",
+            "call for applications",
+            "open call",
+            "applications open",
+            "apply now",
+            "cfa",
+            "cfas",
+            "rfp",
+            "rfps",
+            "request for proposals",
+            "funding",
+            "fund",
+            "фінанс",
+            "конкурс",
+            "конкурсний",
+            "прийом заяв",
+            "подати заявку",
+            "подання заяв",
+            "відбір заяв",
+            "award",
+            "awards",
+            "prize",
+        ),
+    )
+    structured_signal = bool(
+        getattr(grant, "deadline_at", None)
+        or deadline_text
+        or funding_text
+        or funder
+        or clean_text(getattr(grant, "application_url", None))
+        or getattr(grant, "documents", None)
+    )
+
+    digest_signal = _contains_any(
+        title_text,
+        (
+            " дайджест ",
+            " добірка ",
+            " digest ",
+            " roundup ",
+            " грантовий гід ",
+            " grant guide ",
+            " opportunities currently open ",
+            " opportunities closing ",
+        ),
+    )
+    if digest_signal:
+        return GrantClassification.DIGEST, ("text:digest_marker",)
+
+    news_signal = _contains_any(
+        title_text,
+        (
+            " новин",
+            " підсумк",
+            " результати ",
+            " відбулася ",
+            " відбувся ",
+            " долучився ",
+            " долучилась ",
+            " зареєстрував ",
+            " оголосили перемож",
+            " переможц",
+            " тимчасові зміни ",
+            " news ",
+            " update ",
+            " updates ",
+        ),
+    )
+    article_signal = _contains_any(
+        title_text,
+        (
+            " як ",
+            " how to ",
+            " guide ",
+            " гайд ",
+            " стаття ",
+            " article ",
+            " поради ",
+            " секрети ",
+            " explains ",
+        ),
+    )
+    webinar_signal = _contains_any(title_text, (" вебінар", " webinar", " online seminar", " семінар"))
+    event_signal = _contains_any(
+        title_text,
+        (
+            " запрошуємо на ",
+            " захід ",
+            " подія ",
+            " event ",
+            " conference",
+            " конференц",
+            " workshop",
+            " воркшоп",
+            " hackathon",
+            " хакатон",
+            " bootcamp",
+            " табір ",
+        ),
+    )
+    training_signal = _contains_any(
+        title_text,
+        (
+            " training",
+            " тренінг",
+            " курс ",
+            " course",
+            " academy",
+            " академі",
+            " навчальн",
+            " bootcamp",
+        ),
+    )
+    tender_signal = _contains_any(
+        title_text,
+        (
+            " tender",
+            " procurement",
+            " тендер",
+            " закупівля послуг",
+            " закупівлі послуг",
+            " постачальник",
+        ),
+    )
+
+    # Direct grant wording wins over generic event/training words unless the
+    # record was explicitly typed as non-grant by source metadata.
+    if direct_grant_signal:
+        if tender_signal and not _contains_any(title_text, (" grant", " грант", " funding", " фінанс")):
+            return GrantClassification.TENDER, ("text:tender_marker",)
+        return GrantClassification.GRANT, ("text:direct_grant_signal",)
+
+    if webinar_signal:
+        return GrantClassification.WEBINAR, ("text:webinar_marker",)
+    if training_signal:
+        return GrantClassification.TRAINING, ("text:training_marker",)
+    if event_signal:
+        return GrantClassification.EVENT, ("text:event_marker",)
+    if tender_signal:
+        return GrantClassification.TENDER, ("text:tender_marker",)
+    if news_signal:
+        return GrantClassification.NEWS, ("text:news_marker",)
+    if article_signal:
+        return GrantClassification.ARTICLE, ("text:article_marker",)
+
+    finance_signal = _contains_any(
+        title_text,
+        (
+            " finance program",
+            " finance programme",
+            " фінансова підтримка",
+            " кредит",
+            " компенсац",
+            " відшкодуван",
+            " ваучер",
+            " subsidy",
+            " субсид",
+        ),
+    )
+    if finance_signal:
+        return GrantClassification.FINANCE_PROGRAM, ("text:finance_program_marker",)
+
+    if structured_signal and source_family in {SourceFamily.STRUCTURED_DIRECT, SourceFamily.USEFUL_INCOMPLETE}:
+        return GrantClassification.OPPORTUNITY, ("text:structured_opportunity_signal",)
+
+    return GrantClassification.UNKNOWN, ("text:no_classification_signal",)
+
+
+def _needs_source_classification_review(
+    classification: GrantClassification,
+    source_family: SourceFamily,
+    flags: list[QualityFlag],
+) -> bool:
+    if classification != GrantClassification.UNKNOWN:
+        return False
+    if QualityFlag.NOISE_REJECTED in flags:
+        return False
+    return source_family in {SourceFamily.DIGEST_HEAVY, SourceFamily.AGGREGATOR, SourceFamily.EMPTY_OR_PROBLEM}
+
+
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
 def _has_sufficient_context(grant: Any, *, title: str) -> bool:
     text_fields = (
         getattr(grant, "summary", None),
@@ -368,7 +583,7 @@ def _has_sufficient_context(grant: Any, *, title: str) -> bool:
         clean_text(getattr(grant, field_name, None))
         for field_name in ("deadline_text", "funding_amount_text", "funder_name", "program_name")
     )
-    return len(title) >= 20 and (taxonomy_or_terms or structured_context)
+    return len(title) >= 8 and bool(taxonomy_or_terms or structured_context)
 
 
 def _add_optional_field_flags(
@@ -427,6 +642,7 @@ def _has_only_soft_warnings(flags: list[QualityFlag]) -> bool:
         QualityFlag.MISSING_CONTEXT_TEXT,
         QualityFlag.INVALID_STATUS,
         QualityFlag.NEEDS_MANUAL_REVIEW,
+        QualityFlag.SOURCE_CLASSIFICATION_UNCERTAIN,
         QualityFlag.NOISE_REJECTED,
     }
     return any(flag not in hard_flags for flag in flags)

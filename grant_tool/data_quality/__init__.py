@@ -18,6 +18,14 @@ from grant_tool.data_quality.contract import (
     SourceFamily,
     evaluate_grant_quality_contract,
 )
+from grant_tool.data_quality.normalization import (
+    NORMALIZATION_RULE_VERSION,
+    NormalizationResult,
+    clean_funding_amount_text,
+    normalize_currency,
+    normalize_grant_draft,
+    normalize_support_type,
+)
 
 __all__ = [
     "ADVANCED_ENRICHMENT_FIELDS",
@@ -37,5 +45,11 @@ __all__ = [
     "ManualReviewRule",
     "QualityFlag",
     "SourceFamily",
+    "NORMALIZATION_RULE_VERSION",
+    "NormalizationResult",
+    "clean_funding_amount_text",
     "evaluate_grant_quality_contract",
+    "normalize_currency",
+    "normalize_grant_draft",
+    "normalize_support_type",
 ]

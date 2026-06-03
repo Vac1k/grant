@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from grant_tool.config import get_settings
+from grant_tool.data_quality import normalize_grant_draft
 from grant_tool.db.models import Grant, JobRun, JobType
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.types import FetchedGrant, NormalizedGrantDraft
@@ -163,9 +164,12 @@ class FeatureExtractionService:
         self._extract_taxonomy(draft, content_text, fields)
         self._extract_geography(draft, content_text, fields)
         self._extract_text_features(draft, content_text, fields)
+        normalization = normalize_grant_draft(draft, source_slug=source_slug, text=content_text, fields=fields)
+        metadata = dict(draft.extraction_metadata or metadata)
 
         if self.use_llm:
             self._apply_llm_extraction(draft, text, fields)
+            normalization = normalize_grant_draft(draft, source_slug=source_slug, text=content_text, fields=fields)
             metadata = dict(draft.extraction_metadata or metadata)
 
         confidence = self._confidence(draft, text)
@@ -174,11 +178,15 @@ class FeatureExtractionService:
         if self._needs_manual_review(draft, text):
             draft.needs_manual_review = True
             draft.manual_review_reason = draft.manual_review_reason or self._manual_review_reason(draft, text)
+        if normalization.review_reasons and not draft.needs_manual_review:
+            draft.needs_manual_review = True
+            draft.manual_review_reason = "; ".join(normalization.review_reasons)
 
         metadata.update(
             {
                 "stage": "stage_5",
                 "normalization_version": NORMALIZATION_VERSION,
+                "data_preparation_normalization_version": draft.extraction_metadata.get("normalization_rule_version"),
                 "source_slug": source_slug,
                 "fields": fields,
                 "feature_card": self._feature_card(draft),
@@ -817,11 +825,22 @@ class FeatureExtractionService:
                 "eur",
                 "euro",
                 "€",
+                "cad",
+                "c$",
+                "canadian dollar",
                 "usd",
                 "$",
+                "gbp",
+                "£",
+                "pound",
+                "pln",
+                "zlot",
                 "uah",
                 "грн",
                 "₴",
+                "євро",
+                "дол",
+                "фунт",
                 "funding",
                 "budget",
                 "grant amount",
@@ -836,15 +855,23 @@ class FeatureExtractionService:
         currency = None
         if "€" in lowered or re.search(r"\b(?:eur|euro)\b", lowered):
             currency = "EUR"
-        elif "$" in lowered or re.search(r"\busd\b", lowered):
+        elif "євро" in lowered:
+            currency = "EUR"
+        elif "c$" in lowered or re.search(r"\bcad\b", lowered) or "canadian dollar" in lowered:
+            currency = "CAD"
+        elif "$" in lowered or re.search(r"\busd\b", lowered) or "дол" in lowered:
             currency = "USD"
+        elif "£" in lowered or re.search(r"\bgbp\b", lowered) or "pound" in lowered or "фунт" in lowered:
+            currency = "GBP"
+        elif re.search(r"\bpln\b", lowered) or "zlot" in lowered or "злот" in lowered:
+            currency = "PLN"
         elif "₴" in lowered or "грн" in lowered or re.search(r"\buah\b", lowered):
             currency = "UAH"
 
         amount_source = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b", " ", cleaned)
         amount_source = re.sub(r"\b20\d{2}[./-]\d{1,2}[./-]\d{1,2}\b", " ", amount_source)
         amount_matches = re.finditer(
-            r"(?P<prefix>€|eur|euro|usd|uah|\$|грн|₴)?\s*(?P<number>\d[\d\s.,]*)(?:\s*(?P<multiplier>k|m|тис\.?|млн\.?|million|thousand))?(?:\s*(?P<suffix>€|eur|euro|usd|uah|\$|грн|₴))?",
+            r"(?P<prefix>€|eur|euro|євро|usd|дол\.?|gbp|£|pounds?|фунт|pln|zloty|злот|cad|c\$|uah|\$|грн|₴)?\s*(?P<number>\d[\d\s.,]*)(?:\s*(?P<multiplier>k|m|тис\.?|млн\.?|million|thousand))?(?:\s*(?P<suffix>€|eur|euro|євро|usd|дол\.?|gbp|£|pounds?|фунт|pln|zloty|злот|cad|c\$|uah|\$|грн|₴))?",
             amount_source,
             flags=re.IGNORECASE,
         )
@@ -894,7 +921,7 @@ class FeatureExtractionService:
         if re.fullmatch(r"20\d{2}", compact):
             return False
         lowered_window = window.lower()
-        has_adjacent_currency = bool(re.search(r"(€|\$|₴|\beur\b|\beuro\b|\busd\b|\buah\b|грн)", lowered_window))
+        has_adjacent_currency = bool(re.search(r"(€|c\$|\$|£|₴|\beur\b|\beuro\b|євро|\busd\b|дол|\bgbp\b|pounds?|фунт|\bpln\b|zloty|злот|\bcad\b|canadian dollar|\buah\b|грн)", lowered_window))
         has_money_word = any(token in lowered_window for token in ("funding", "budget", "grant amount", "сума", "фінанс", "бюджет", "підтримк"))
         if multiplier:
             return True
@@ -909,7 +936,7 @@ class FeatureExtractionService:
         compact = number.replace(" ", "").strip(".,")
         if re.fullmatch(r"\d{1,2}[.,]\d{1,2}", compact):
             lowered_window = window.lower()
-            has_adjacent_currency = bool(re.search(r"(€|\$|₴|\beur\b|\beuro\b|\busd\b|\buah\b|грн)", lowered_window))
+            has_adjacent_currency = bool(re.search(r"(€|c\$|\$|£|₴|\beur\b|\beuro\b|євро|\busd\b|дол|\bgbp\b|pounds?|фунт|\bpln\b|zloty|злот|\bcad\b|canadian dollar|\buah\b|грн)", lowered_window))
             if compact.startswith("0") or not has_adjacent_currency or any(token in lowered_window for token in ("квед", "nace", "classification", "класиф")):
                 return True
         return False
@@ -921,7 +948,7 @@ class FeatureExtractionService:
             return False
         if cleaned.startswith("{") and ("budgetTopicActionMap" in cleaned or "deadlineDates" in cleaned):
             return True
-        if re.fullmatch(r"(?i)(?:eur|euro|usd|uah|€|\$|₴|грн)?\s*20\d{2}\s*(?:eur|euro|usd|uah|€|\$|₴|грн)?", cleaned):
+        if re.fullmatch(r"(?i)(?:eur|euro|євро|usd|дол\.?|gbp|pounds?|фунт|pln|zloty|злот|cad|c\$|uah|€|\$|£|₴|грн)?\s*20\d{2}\s*(?:eur|euro|євро|usd|дол\.?|gbp|pounds?|фунт|pln|zloty|злот|cad|c\$|uah|€|\$|£|₴|грн)?", cleaned):
             return True
         return FeatureExtractionService._looks_like_classification_number(cleaned, cleaned)
 
@@ -970,9 +997,24 @@ class FeatureExtractionService:
 
     @staticmethod
     def _number_to_decimal(value: str, multiplier: str | None) -> Decimal | None:
-        normalized = value.replace(" ", "").strip(".,").replace(",", ".")
-        if normalized.count(".") > 1:
-            normalized = normalized.replace(".", "")
+        compact = value.replace(" ", "").strip(".,")
+        if "," in compact and "." in compact:
+            if compact.rfind(".") > compact.rfind(","):
+                normalized = compact.replace(",", "")
+            else:
+                normalized = compact.replace(".", "").replace(",", ".")
+        elif "," in compact:
+            if re.fullmatch(r"\d{1,3}(,\d{3})+", compact):
+                normalized = compact.replace(",", "")
+            else:
+                normalized = compact.replace(",", ".")
+        elif "." in compact:
+            if re.fullmatch(r"\d{1,3}(\.\d{3})+", compact):
+                normalized = compact.replace(".", "")
+            else:
+                normalized = compact
+        else:
+            normalized = compact
         try:
             amount = Decimal(normalized)
         except Exception:

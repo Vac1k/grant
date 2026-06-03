@@ -21,7 +21,9 @@
 - дані вже потрапляють у `discovered_grant_items`, `raw_grant_snapshots` і `grants`;
 - Step 1 audit поточного стану таблиці `grants` реалізований як read-only CLI/report;
 - Step 2 quality contract реалізований як документація і pure code-level evaluator;
-- наступний відкритий крок - `Step 3: Noise Classification And Matching Gate`.
+- Step 3 noise classification і matching gate реалізовані;
+- Step 4 critical field normalization реалізований у deterministic extraction flow;
+- наступний відкритий крок - `Step 5: Deduplication`.
 
 ## Реалізовано
 
@@ -211,7 +213,7 @@ Evaluator повертає:
 - schema не змінювалась;
 - `quality_score` і persisted `quality_flags` не додавались на Step 2;
 - matching behavior ще не переписувався;
-- full deterministic title/content noise classification лишається для Step 3;
+- full deterministic title/content noise classification було залишено для Step 3 і реалізовано нижче;
 - contract є pure read-only layer поверх існуючої `Grant` model.
 
 Acceptance:
@@ -244,3 +246,175 @@ Verification result:
 - full local suite returned `Ran 76 tests ... OK`;
 - compileall completed successfully;
 - running Docker app can import `grant_tool.data_quality`.
+
+### Step 3: Noise Classification And Matching Gate
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-02`.
+
+Мета Step 3 була рано відокремити справжні grant/support opportunities від news/digest/webinar/event/article/training/tender noise і не допускати такі records у active matching.
+
+Реалізовано:
+
+- deterministic text classification у `grant_tool/data_quality/contract.py`;
+- source-specific uncertainty gate для digest-heavy, aggregator і empty/problem source families;
+- `classification_reasons` у `GrantQualityEvaluation`;
+- новий quality flag:
+  - `source_classification_uncertain`;
+- нове manual review rule:
+  - `source_classification_uncertain`;
+- matching hard filter integration у `grant_tool/matching/service.py`;
+- quality evidence у `MatchCandidate.evidence["quality"]`;
+- tests для deterministic noise classification і matching gate.
+
+Класифікація тепер враховує:
+
+- explicit source/extraction fields:
+  - `extraction_metadata.classification`;
+  - `source_metadata.classification`;
+  - `opportunity_type`;
+  - `support_type`;
+- deterministic title/content markers для:
+  - direct grant calls;
+  - digest;
+  - news;
+  - article;
+  - event;
+  - webinar;
+  - training;
+  - tender;
+  - finance program;
+  - structured opportunity.
+
+Matching gate behavior:
+
+- `noise_rejected` records отримують hard filter reason:
+  - `quality_gate:noise_rejected:<classification>`;
+- `needs_review` records отримують hard filter reason:
+  - `quality_gate:needs_review`;
+- quality blockers додаються як:
+  - `quality_gate:<blocker>`;
+- `usable_with_warnings` records не блокуються, але warnings додаються в `manual_checks`;
+- raw records не видаляються і не змінюються.
+
+Source-specific behavior:
+
+- direct grant wording wins over generic noisy source risk;
+- digest-heavy/aggregator sources з unknown classification і без direct grant signal переходять у `needs_review`;
+- useful incomplete sources можуть лишатися `usable_with_warnings`, якщо мають достатній context.
+
+Архітектурне рішення:
+
+- schema не змінювалась;
+- persisted `quality_flags`, `quality_score` і prepared table не додавались;
+- gate підключений у matching layer, а не в repository query, щоб evaluated/filtered counts лишались прозорими;
+- old raw/normalized records не видаляються.
+
+Acceptance:
+
+- noisy records не потрапляють у matching без flag/tier;
+- classification пояснювана через `classification_reasons`, flags і matching evidence;
+- є tests для digest/news/webinar/article/event/training cases;
+- source-specific behavior покритий tests;
+- зміни не ламають ingestion;
+- raw records не видаляються.
+
+Перевірка:
+
+```text
+poetry run python -m unittest tests.test_data_quality_contract tests.test_stage6_matching
+poetry run python -m unittest tests.test_data_quality_contract tests.test_data_preparation_audit tests.test_stage6_matching tests.test_stage5_extraction
+poetry run python -m unittest
+poetry run python -m compileall grant_tool tests
+docker compose exec app python -c "from grant_tool.data_quality import GrantClassification, GrantQualityTier; print(GrantClassification.WEBINAR.value, GrantQualityTier.NOISE_REJECTED.value)"
+```
+
+Verification result:
+
+- targeted Step 3 contract/matching tests returned `Ran 14 tests ... OK`;
+- broader data quality/audit/matching/extraction tests returned `Ran 35 tests ... OK`;
+- full local suite returned `Ran 80 tests ... OK`;
+- compileall completed successfully;
+- running Docker app can import the new classification/gate symbols.
+
+### Step 4: Normalize Critical Fields
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-02`.
+
+Мета Step 4 була привести critical normalized fields у `grants` до стабільного формату для records, які не відкидаються раннім noise gate.
+
+Реалізовано deterministic normalization layer:
+
+- `grant_tool/data_quality/normalization.py`;
+- exports у `grant_tool/data_quality/__init__.py`;
+- integration у `grant_tool/extraction/service.py`;
+- currency/amount extraction aliases у `grant_tool/ingestion/utils.py`.
+
+Нормалізовані поля:
+
+- `status` до `open`, `closed`, `unknown`;
+- `deadline_at` і `deadline_text`;
+- `funding_amount_text`;
+- `currency`;
+- `countries`;
+- `regions`;
+- `funder_name`;
+- `support_type`;
+- `opportunity_type`;
+- `eligibility_text`.
+
+Ключові правила:
+
+- deadline parser використовує існуючі deterministic date helpers і чистить UI-tail noise типу Google calendar/share/detail;
+- currency extraction підтримує `EUR`, `USD`, `UAH`, `GBP`, `PLN`, `CAD` та поширені українські/символьні aliases;
+- `C$` обробляється як `CAD`, а не як generic `USD`;
+- amount text чиститься від JSON budget blobs, дат і prefix noise, але raw value лишається, якщо валюта непевна;
+- source-level funder fallback застосовується тільки для джерел із зрозумілим власником, наприклад `eu-funding` і `diia-business`;
+- funder може бути витягнутий з короткого parenthetical title evidence, наприклад `(ACTED)`;
+- country/region inference додає базову Україну, EU і українські області за text evidence;
+- support type inference мапить training/tender/loan/guarantee/leasing/voucher/compensation/finance programme/grant на стабільні values;
+- weak amount records без надійної валюти отримують manual review reason через `NormalizationResult.review_reasons`;
+- normalization записує `normalization_rule_version` і `normalized_fields` у `extraction_metadata`.
+
+Архітектурне рішення:
+
+- schema не змінювалась;
+- normalization підключена в Stage 5 enrichment після deterministic extraction і повторно після optional LLM extraction;
+- normalization не вводить global hard requirement для `funder_name`, `regions`, `application_url`, `published_at`;
+- raw records не видаляються;
+- непевні значення не перезаписуються вигаданими даними.
+
+Acceptance:
+
+- нормалізація покрита unit tests;
+- Stage 5 integration test підтверджує, що normalization застосовується під час enrichment;
+- ingestion flow не зламаний;
+- raw amount value не губиться, якщо currency непевна;
+- weak amount records можуть отримувати manual review reason;
+- global hard requirement для optional source-dependent fields не доданий.
+
+Перевірка:
+
+```text
+poetry run python -m unittest tests.test_data_normalization
+poetry run python -m unittest tests.test_stage5_extraction
+poetry run python -m unittest
+poetry run python -m compileall grant_tool tests
+docker compose build app
+docker compose up -d app
+docker compose exec app python -m unittest tests.test_data_normalization tests.test_stage5_extraction
+curl -s -i http://localhost:8000/api/v1/health
+```
+
+Verification result:
+
+- targeted normalization tests returned `Ran 6 tests ... OK`;
+- targeted Stage 5 extraction tests returned `Ran 21 tests ... OK`;
+- full local suite returned `Ran 88 tests ... OK`;
+- compileall completed successfully;
+- Docker app image rebuilt and app service restarted successfully;
+- Docker targeted normalization/extraction tests returned `Ran 27 tests ... OK`;
+- Docker API health returned `HTTP/1.1 200 OK`.

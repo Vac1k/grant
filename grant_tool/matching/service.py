@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
+from grant_tool.data_quality import GrantQualityEvaluation, GrantQualityTier, evaluate_grant_quality_contract
 from grant_tool.db.models import ApplicationHistory, ClientProfile, Grant, MatchRun
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.embeddings import EmbeddingService
@@ -140,7 +141,12 @@ class ShortlistMatchingService:
         history: list[ApplicationHistory] | None = None,
         use_vector: bool = False,
     ) -> MatchCandidate:
-        filter_passed, filter_reasons, manual_checks = self._hard_filter(grant=grant, client=client)
+        quality_evaluation = evaluate_grant_quality_contract(grant)
+        filter_passed, filter_reasons, manual_checks = self._hard_filter(
+            grant=grant,
+            client=client,
+            quality_evaluation=quality_evaluation,
+        )
         keyword_score, keyword_evidence = self._keyword_score(grant=grant, client=client)
         vector_score, vector_evidence = self._vector_score(grant=grant, client=client, history=history or []) if use_vector else (None, {"enabled": False})
         history_score, history_evidence = self._history_score(grant=grant, history=history or [])
@@ -153,7 +159,8 @@ class ShortlistMatchingService:
             score = stage6_score
         if grant.extraction_confidence is not None:
             score += min(Decimal(str(grant.extraction_confidence)), Decimal("1.0000")) * Decimal("0.05")
-        if manual_checks:
+        penalized_manual_checks = [check for check in manual_checks if not check.startswith("quality warning:")]
+        if penalized_manual_checks:
             score -= Decimal("0.0500")
         if any(reason.startswith("excluded_topic:") for reason in filter_reasons):
             score -= Decimal("0.2000")
@@ -175,6 +182,15 @@ class ShortlistMatchingService:
                 "history": history_evidence,
                 "hard_filters": filter_reasons,
                 "manual_checks": manual_checks,
+                "quality": {
+                    "tier": quality_evaluation.tier.value,
+                    "classification": quality_evaluation.classification.value,
+                    "classification_reasons": list(quality_evaluation.classification_reasons),
+                    "flags": [flag.value for flag in quality_evaluation.flags],
+                    "matching_eligible": quality_evaluation.matching_eligible,
+                    "matching_blockers": list(quality_evaluation.matching_blockers),
+                    "source_family": quality_evaluation.source_family.value,
+                },
             },
         )
 
@@ -189,9 +205,26 @@ class ShortlistMatchingService:
         return self.repository.list_client_profiles(enabled_only=True)
 
     @staticmethod
-    def _hard_filter(*, grant: Grant, client: ClientProfile) -> tuple[bool, list[str], list[str]]:
+    def _hard_filter(
+        *,
+        grant: Grant,
+        client: ClientProfile,
+        quality_evaluation: GrantQualityEvaluation,
+    ) -> tuple[bool, list[str], list[str]]:
         reasons: list[str] = []
         manual_checks: list[str] = []
+
+        if quality_evaluation.tier == GrantQualityTier.NOISE_REJECTED:
+            reasons.append(f"quality_gate:noise_rejected:{quality_evaluation.classification.value}")
+        elif quality_evaluation.tier == GrantQualityTier.NEEDS_REVIEW:
+            reasons.append("quality_gate:needs_review")
+        elif quality_evaluation.tier == GrantQualityTier.USABLE_WITH_WARNINGS:
+            for flag in quality_evaluation.flags:
+                manual_checks.append(f"quality warning: {flag.value}")
+
+        for blocker in quality_evaluation.matching_blockers:
+            if blocker not in {"closed_status"}:
+                reasons.append(f"quality_gate:{blocker}")
 
         if grant.status == "closed":
             reasons.append("closed_grant")
@@ -267,6 +300,7 @@ class ShortlistMatchingService:
                     "closed_grant",
                     "deadline_passed",
                     "unsupported_opportunity_type",
+                    "quality_gate",
                     "country_mismatch",
                     "applicant_type_mismatch",
                     "nonprofit_only_grant",

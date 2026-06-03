@@ -99,9 +99,14 @@ Allowed classifications:
 - `tender`;
 - `unknown`.
 
-Поточний Step 2 evaluator використовує explicit fields (`opportunity_type`, `support_type`, `source_metadata.classification`, `extraction_metadata.classification`).
+Evaluator використовує explicit fields:
 
-Повна deterministic classification по title/content реалізується в Step 3.
+- `opportunity_type`;
+- `support_type`;
+- `source_metadata.classification`;
+- `extraction_metadata.classification`.
+
+Після Step 3 evaluator також використовує deterministic title/content markers для obvious noise і direct grant signals.
 
 ## Matching Gate
 
@@ -204,6 +209,7 @@ Code-level flags:
 - `possible_training`;
 - `possible_tender`;
 - `possible_duplicate`;
+- `source_classification_uncertain`;
 - `needs_manual_review`;
 - `low_extraction_confidence`;
 - `noise_rejected`.
@@ -216,7 +222,8 @@ Manual review rules:
 - `core_context_missing`;
 - `invalid_status`;
 - `low_extraction_confidence`;
-- `noise_or_non_grant`.
+- `noise_or_non_grant`;
+- `source_classification_uncertain`.
 
 ## Source Families
 
@@ -240,17 +247,19 @@ Source-level contract:
 - `empty_or_problem`:
   - `gurt`.
 
-## Step 2 Boundary
+## Implementation Boundary
 
-Step 2 defines and tests the contract.
+Step 2 defined and tested the contract.
 
-Step 2 does not:
+Step 3 implemented deterministic classification and wired the matching gate into shortlist matching.
+
+Step 4 implemented deterministic critical-field normalization in Stage 5 extraction, including status, deadline, amount text, currency, geography, funder fallback, support type and eligibility cleanup.
+
+The contract still does not:
 
 - persist `quality_score`;
 - persist `quality_flags`;
 - add DB columns;
-- rewrite matching behavior;
 - delete noise records;
-- fully classify content by text heuristics.
 
-Those changes belong to Step 3, Step 7 and Step 8.
+Persisted scoring/flags and prepared data structures belong to Step 7 and Step 8.
