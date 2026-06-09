@@ -634,6 +634,14 @@ def _add_contract_risk_flags(
         if any(str(reason) == "duplicate_risk_with_official_eu_source" for reason in quality_reasons):
             _append_once(flags, QualityFlag.POSSIBLE_DUPLICATE)
 
+    deduplication = _deduplication_metadata(grant)
+    if deduplication and (
+        deduplication.get("is_duplicate")
+        or deduplication.get("potential_duplicate")
+        or _metadata_int(deduplication.get("candidate_count")) > 0
+    ):
+        _append_once(flags, QualityFlag.POSSIBLE_DUPLICATE)
+
 
 def _has_only_soft_warnings(flags: list[QualityFlag]) -> bool:
     hard_flags = {
@@ -646,6 +654,21 @@ def _has_only_soft_warnings(flags: list[QualityFlag]) -> bool:
         QualityFlag.NOISE_REJECTED,
     }
     return any(flag not in hard_flags for flag in flags)
+
+
+def _deduplication_metadata(grant: Any) -> dict[str, Any] | None:
+    metadata = getattr(grant, "extraction_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    deduplication = metadata.get("deduplication")
+    return deduplication if isinstance(deduplication, dict) else None
+
+
+def _metadata_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _append_once(items: list[Any], item: Any) -> None:

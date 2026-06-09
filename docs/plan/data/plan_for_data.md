@@ -167,67 +167,6 @@ Step 4 normalization rules
 - після Step 5 треба знову запустити audit і подивитися, які fields або source-specific patterns ще потребують normalization;
 - manual review UI/workflow логічно належить до Step 8 або окремого post-data production readiness stage.
 
-## Step 5: Deduplication
-
-Мета: знайти дублікати між джерелами і всередині одного джерела.
-
-Особливо перевірити:
-
-- `eu-funding` і `eufundingportal-eu`;
-- aggregator sources;
-- записи з однаковим title;
-- записи з однаковим deadline і funder;
-- записи з різними URL, але однаковим змістом;
-- записи з однаковим normalized external id, якщо він є.
-
-Потрібно реалізувати:
-
-- duplicate candidate detection;
-- пояснюваний duplicate score;
-- flag для potential duplicate;
-- правило, який record вважати primary;
-- зв'язок duplicate records з primary record або окрема таблиця duplicate groups.
-
-Acceptance:
-
-- duplicates не видаляються без trace;
-- duplicate candidates можна перевірити;
-- є tests на exact і fuzzy duplicate cases;
-- matching layer може ігнорувати duplicate records або використовувати primary.
-
-## Step 6: AI Fallback For Extraction
-
-Мета: використовувати AI тільки там, де deterministic extraction недостатній.
-
-AI не використовується для search crawling.
-
-AI може допомагати:
-
-- витягнути eligibility;
-- коротко описати grant;
-- визначити країну або регіон;
-- визначити target audience;
-- класифікувати, чи це справжній grant;
-- пояснити, чому record потребує manual review;
-- заповнити слабкі поля з raw text.
-
-Потрібно реалізувати:
-
-- правило, коли AI fallback дозволений;
-- prompt contract;
-- schema для AI result;
-- confidence або reason fields;
-- збереження AI output окремо від raw site data;
-- можливість вимкнути AI fallback.
-
-Acceptance:
-
-- AI не перезаписує deterministic fields без правила;
-- AI output traceable;
-- є fallback behavior без API key;
-- є tests для schema validation;
-- manual review reason пояснює AI uncertainty.
-
 ## Step 7: Quality Score
 
 Мета: додати вимірювану якість кожного grant record.
@@ -318,17 +257,15 @@ Acceptance:
 
 ## Поточний Plan State
 
-Step 1, Step 2, Step 3 і Step 4 виконані та перенесені у `implemented_for_data.md`.
+Step 1, Step 2, Step 3, Step 4, Step 5 і Step 6 виконані та перенесені у `implemented_for_data.md`.
 
 Відкриті steps:
 
-- Step 5: Deduplication;
-- Step 6: AI Fallback For Extraction;
 - Step 7: Quality Score;
 - Step 8: Prepared Grants Layer.
 
 Перший рекомендований prompt для реалізації:
 
 ```text
-implement step 5 for data preparation
+implement step 7 for data preparation
 ```

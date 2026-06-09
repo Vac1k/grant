@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -395,21 +397,142 @@ class Stage5ExtractionTestCase(unittest.TestCase):
                 return {
                     "topics": ["energy resilience"],
                     "applicant_types": ["municipality"],
+                    "confidence": 0.82,
+                    "evidence": {"topics": "energy resilience projects"},
                     "metadata": {"status": "success", "provider": "test", "model": "fake"},
                 }
 
         draft = NormalizedGrantDraft(
             source_url="https://example.org/grants/energy",
             title="Energy resilience grant",
-            description_text="Funding for community energy resilience projects.",
+            description_text=(
+                "Funding for community energy resilience projects. The call supports municipal applicants "
+                "working on local infrastructure resilience and energy continuity."
+            ),
         )
 
         FeatureExtractionService(use_llm=True, llm_client=FakeLlmClient()).enrich_draft(draft, source_slug="example")
 
         self.assertEqual(draft.extraction_method, "deterministic_llm")
         self.assertEqual(draft.extraction_metadata["llm"]["status"], "success")
+        self.assertEqual(draft.extraction_metadata["llm"]["version"], "data-preparation-step6-v1")
+        self.assertIn("missing_applicant_types", draft.extraction_metadata["llm"]["fallback_reasons"])
+        self.assertIn("applicant_types", draft.extraction_metadata["llm"]["applied_fields"])
         self.assertIn("energy resilience", draft.topics)
         self.assertIn("municipality", draft.applicant_types)
+
+    def test_llm_is_skipped_when_deterministic_extraction_is_sufficient(self) -> None:
+        class CountingLlmClient:
+            calls = 0
+
+            def extract(self, *, draft: NormalizedGrantDraft, text: str) -> dict:
+                self.calls += 1
+                return {}
+
+        client = CountingLlmClient()
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/complete",
+            title="AI grant for Ukrainian SMEs",
+            summary="Funding for Ukrainian SMEs building AI products with clear eligibility and application guidance.",
+            description_text=(
+                "Eligible applicants are Ukrainian SME companies and startups. Funding supports artificial intelligence "
+                "innovation projects in Ukraine with documented implementation plans."
+            ),
+            deadline_text="Deadline: 31.12.2026",
+            funding_amount_text="EUR 100 000",
+            currency="EUR",
+            countries=["Ukraine"],
+            regions=["Kyiv"],
+            eligibility_text="Eligible applicants are Ukrainian SME companies.",
+            applicant_types=["SME"],
+            topics=["AI", "innovation"],
+        )
+
+        FeatureExtractionService(use_llm=True, llm_client=client).enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(draft.extraction_method, "deterministic")
+        self.assertEqual(draft.extraction_metadata["llm"]["status"], "skipped")
+        self.assertEqual(draft.extraction_metadata["llm"]["reason"], "deterministic extraction sufficient")
+
+    def test_llm_without_api_key_is_traceable_and_keeps_manual_review_reason(self) -> None:
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/weak",
+            title="Community resilience opportunity",
+            description_text=(
+                "This opportunity supports community resilience activities in Ukraine. The text mentions support "
+                "for applicants but does not expose structured eligibility or taxonomy fields."
+            ),
+        )
+        fake_settings = SimpleNamespace(openai_api_key=None, llm_model="fake")
+
+        with patch("grant_tool.extraction.service.get_settings", return_value=fake_settings):
+            FeatureExtractionService(use_llm=True).enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(draft.extraction_metadata["llm"]["status"], "skipped")
+        self.assertEqual(draft.extraction_metadata["llm"]["reason"], "OPENAI_API_KEY is not configured")
+        self.assertTrue(draft.needs_manual_review)
+        self.assertIn("AI fallback skipped", draft.manual_review_reason or "")
+
+    def test_invalid_llm_schema_is_not_merged_and_marks_review(self) -> None:
+        class InvalidLlmClient:
+            def extract(self, *, draft: NormalizedGrantDraft, text: str) -> dict:
+                return {
+                    "topics": "AI",
+                    "confidence": 1.2,
+                    "metadata": {"status": "success", "provider": "test", "model": "fake"},
+                }
+
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/schema",
+            title="Schema validation grant",
+            description_text=(
+                "Funding opportunity for Ukrainian organizations. The text is long enough for fallback extraction but "
+                "deterministic extraction does not identify applicant types or topics."
+            ),
+        )
+
+        FeatureExtractionService(use_llm=True, llm_client=InvalidLlmClient()).enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(draft.extraction_metadata["llm"]["status"], "invalid")
+        self.assertIn("topics must be a list", draft.extraction_metadata["llm"]["schema_errors"])
+        self.assertEqual(draft.topics, [])
+        self.assertTrue(draft.needs_manual_review)
+        self.assertIn("AI fallback invalid", draft.manual_review_reason or "")
+
+    def test_llm_fills_missing_fields_without_overwriting_deterministic_summary(self) -> None:
+        class FakeLlmClient:
+            def extract(self, *, draft: NormalizedGrantDraft, text: str) -> dict:
+                return {
+                    "summary": "LLM replacement summary should not overwrite deterministic summary.",
+                    "eligibility_text": "Eligible applicants are Ukrainian NGOs.",
+                    "applicant_types": ["NGO"],
+                    "topics": ["community"],
+                    "confidence": 0.76,
+                    "evidence": {"eligibility_text": "Eligible applicants are Ukrainian NGOs."},
+                    "metadata": {"status": "success", "provider": "test", "model": "fake"},
+                }
+
+        original_summary = "Deterministic summary for a Ukrainian community support grant with enough detail to keep."
+        draft = NormalizedGrantDraft(
+            source_url="https://example.org/grants/no-overwrite",
+            title="Community support grant",
+            summary=original_summary,
+            description_text=(
+                "Funding for community projects in Ukraine. The source states that Ukrainian NGOs may submit proposals "
+                "and that projects should support local resilience."
+            ),
+            countries=["Ukraine"],
+            topics=["community"],
+        )
+
+        FeatureExtractionService(use_llm=True, llm_client=FakeLlmClient()).enrich_draft(draft, source_slug="example")
+
+        self.assertEqual(draft.summary, original_summary)
+        self.assertEqual(draft.eligibility_text, "Eligible applicants are Ukrainian NGOs.")
+        self.assertIn("NGO", draft.applicant_types)
+        self.assertNotIn("summary", draft.extraction_metadata["llm"]["applied_fields"])
+        self.assertIn("eligibility_text", draft.extraction_metadata["llm"]["applied_fields"])
 
     def test_deadline_parser_ignores_publication_date_and_reads_ukrainian_month(self) -> None:
         text = (

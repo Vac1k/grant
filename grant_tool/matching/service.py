@@ -191,6 +191,7 @@ class ShortlistMatchingService:
                     "matching_blockers": list(quality_evaluation.matching_blockers),
                     "source_family": quality_evaluation.source_family.value,
                 },
+                "deduplication": self._deduplication_evidence(grant),
             },
         )
 
@@ -213,6 +214,13 @@ class ShortlistMatchingService:
     ) -> tuple[bool, list[str], list[str]]:
         reasons: list[str] = []
         manual_checks: list[str] = []
+        deduplication = ShortlistMatchingService._deduplication_evidence(grant)
+        primary_grant_id = deduplication.get("primary_grant_id")
+
+        if deduplication.get("is_duplicate") and primary_grant_id and primary_grant_id != str(grant.id):
+            reasons.append(f"duplicate_grant:{primary_grant_id}")
+        elif deduplication.get("potential_duplicate") and not deduplication.get("is_primary"):
+            manual_checks.append("potential duplicate requires review")
 
         if quality_evaluation.tier == GrantQualityTier.NOISE_REJECTED:
             reasons.append(f"quality_gate:noise_rejected:{quality_evaluation.classification.value}")
@@ -300,6 +308,7 @@ class ShortlistMatchingService:
                     "closed_grant",
                     "deadline_passed",
                     "unsupported_opportunity_type",
+                    "duplicate_grant",
                     "quality_gate",
                     "country_mismatch",
                     "applicant_type_mismatch",
@@ -497,6 +506,36 @@ class ShortlistMatchingService:
             " ".join(grant.applicant_types or []),
         ]
         return f" {clean_text(' '.join(part for part in parts if part)).lower()} "
+
+    @staticmethod
+    def _deduplication_evidence(grant: Grant) -> dict[str, Any]:
+        metadata = grant.extraction_metadata if isinstance(grant.extraction_metadata, dict) else {}
+        deduplication = metadata.get("deduplication")
+        if not isinstance(deduplication, dict):
+            return {
+                "version": None,
+                "is_duplicate": False,
+                "potential_duplicate": False,
+                "primary_grant_id": None,
+                "candidate_count": 0,
+            }
+        return {
+            "version": deduplication.get("version"),
+            "is_duplicate": bool(deduplication.get("is_duplicate")),
+            "is_primary": bool(deduplication.get("is_primary")),
+            "potential_duplicate": bool(deduplication.get("potential_duplicate")),
+            "duplicate_group_id": deduplication.get("duplicate_group_id"),
+            "primary_grant_id": deduplication.get("primary_grant_id"),
+            "max_candidate_score": deduplication.get("max_candidate_score"),
+            "candidate_count": ShortlistMatchingService._metadata_int(deduplication.get("candidate_count")),
+        }
+
+    @staticmethod
+    def _metadata_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _explanation(candidate: MatchCandidate) -> str:

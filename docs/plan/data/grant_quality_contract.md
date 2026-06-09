@@ -255,10 +255,13 @@ Step 3 implemented deterministic classification and wired the matching gate into
 
 Step 4 implemented deterministic critical-field normalization in Stage 5 extraction, including status, deadline, amount text, currency, geography, funder fallback, support type and eligibility cleanup.
 
+Step 5 implemented soft deduplication metadata and matching gate behavior for non-primary duplicate records. `possible_duplicate` can now come from `extraction_metadata.deduplication`.
+
+Step 6 implemented validated optional AI fallback for weak extraction fields. AI output is stored under `extraction_metadata.llm`; validated AI classification may populate `extraction_metadata.classification` only when no existing classification is present.
+
 The contract still does not:
 
 - persist `quality_score`;
-- persist `quality_flags`;
 - add DB columns;
 - delete noise records;
 

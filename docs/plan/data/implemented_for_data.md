@@ -23,7 +23,9 @@
 - Step 2 quality contract реалізований як документація і pure code-level evaluator;
 - Step 3 noise classification і matching gate реалізовані;
 - Step 4 critical field normalization реалізований у deterministic extraction flow;
-- наступний відкритий крок - `Step 5: Deduplication`.
+- Step 5 deduplication реалізований як soft-dedup metadata layer і matching gate;
+- Step 6 AI fallback for extraction реалізований як контрольований optional fallback;
+- наступний відкритий крок - `Step 7: Quality Score`.
 
 ## Реалізовано
 
@@ -417,4 +419,206 @@ Verification result:
 - compileall completed successfully;
 - Docker app image rebuilt and app service restarted successfully;
 - Docker targeted normalization/extraction tests returned `Ran 27 tests ... OK`;
+- Docker API health returned `HTTP/1.1 200 OK`.
+
+### Step 5: Deduplication
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-03`.
+
+Мета Step 5 була знайти duplicate candidates між джерелами і всередині одного джерела без видалення records і без втрати trace.
+
+Реалізовано soft-dedup layer:
+
+- `grant_tool/deduplication/service.py`;
+- `grant_tool/deduplication/__init__.py`;
+- repository query:
+  - `GrantRepository.list_grants_for_deduplication`;
+- CLI command:
+  - `grant-tool deduplicate`;
+  - `grant-tool deduplicate --dry-run`;
+- quality flag integration:
+  - `QualityFlag.POSSIBLE_DUPLICATE`;
+- matching gate integration:
+  - non-primary duplicates отримують hard filter `duplicate_grant:<primary_grant_id>`.
+
+Duplicate detector:
+
+- порівнює canonical `source_url` і `application_url`;
+- нормалізує title і рахує exact/fuzzy title similarity;
+- враховує deadline;
+- враховує funder;
+- враховує program name;
+- враховує funding amount/currency;
+- враховує taxonomy overlap;
+- має source-pair rule для `eu-funding` і `eufundingportal-eu`;
+- використовує окремі thresholds:
+  - candidate threshold;
+  - duplicate group threshold.
+
+Metadata format:
+
+```text
+grant.extraction_metadata["deduplication"] = {
+  version,
+  is_duplicate,
+  is_primary,
+  potential_duplicate,
+  duplicate_group_id,
+  duplicate_group_size,
+  primary_grant_id,
+  max_candidate_score,
+  candidate_count,
+  candidates
+}
+```
+
+Primary record rule:
+
+- prefer higher quality tier;
+- prefer structured/direct source over aggregator/digest-heavy source;
+- prefer `open` over `unknown`/`closed`;
+- prefer richer structured fields;
+- prefer higher extraction confidence;
+- prefer richer context text;
+- tie-break deterministically by update time and grant id.
+
+Архітектурне рішення:
+
+- schema не змінювалась;
+- duplicate groups не винесені в окрему таблицю на Step 5;
+- duplicates не видаляються;
+- primary/non-primary status зберігається в `extraction_metadata`;
+- matching пропускає primary record і фільтрує non-primary duplicate records;
+- окрема duplicate table або prepared view лишається можливістю для Step 8, якщо буде потрібен більш формальний prepared layer.
+
+Acceptance:
+
+- duplicate candidates не видаляються без trace;
+- candidates можна перевірити через `grant-tool deduplicate --dry-run`;
+- exact duplicate cases покриті tests;
+- fuzzy duplicate cases покриті tests;
+- matching layer може ігнорувати non-primary duplicates;
+- quality contract бачить duplicate risk як `possible_duplicate`.
+
+Перевірка:
+
+```text
+poetry run python -m unittest tests.test_data_deduplication
+poetry run python -m unittest tests.test_data_deduplication tests.test_stage6_matching tests.test_stage8_search_report
+poetry run python -m unittest
+poetry run python -m compileall grant_tool tests
+docker compose exec app grant-tool deduplicate --dry-run
+docker compose exec app python -m unittest tests.test_data_deduplication tests.test_stage6_matching tests.test_stage8_search_report
+curl -s -i http://localhost:8000/api/v1/health
+```
+
+Verification result:
+
+- targeted deduplication tests returned `Ran 2 tests ... OK`;
+- deduplication/matching/CLI formatter tests returned `Ran 10 tests ... OK`;
+- full local suite returned `Ran 91 tests ... OK`;
+- compileall completed successfully;
+- Docker app image rebuilt and app service restarted successfully;
+- Docker targeted deduplication/matching/CLI formatter tests returned `Ran 10 tests ... OK`;
+- Docker API health returned `HTTP/1.1 200 OK`;
+- Docker dry-run returned `processed=419 candidates=0 duplicate_pairs=0 duplicate_groups=0 duplicate_records=0 dry_run=yes`.
+
+### Step 6: AI Fallback For Extraction
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-03`.
+
+Мета Step 6 була зробити AI extraction контрольованим fallback, а не першим шаром extraction.
+
+Реалізовано в `grant_tool/extraction/service.py`:
+
+- fallback policy:
+  - AI викликається тільки коли deterministic extraction лишає weak/missing fields;
+  - AI не викликається, якщо deterministic extraction достатній;
+  - AI не викликається, якщо source text занадто короткий;
+- prompt contract для OpenAI client;
+- schema validation для AI result;
+- confidence gate;
+- traceable metadata:
+  - `extraction_metadata["llm"]["version"]`;
+  - `status`;
+  - `fallback_reasons`;
+  - `schema_errors`;
+  - `confidence`;
+  - `applied_fields`;
+  - sanitized `output`;
+- no-key fallback behavior:
+  - якщо `--use-llm` увімкнено, але `OPENAI_API_KEY` немає, record не падає;
+  - metadata отримує `status=skipped`;
+  - ambiguous record отримує manual review reason;
+- safe merge rules:
+  - text fields заповнюються тільки коли вони missing або weak;
+  - deterministic summary не перезаписується якісним AI summary;
+  - list fields merge-яться без видалення deterministic values;
+  - classification може бути записана в metadata тільки якщо нема existing classification і AI value проходить schema.
+
+AI fallback може допомагати з:
+
+- `summary`;
+- `eligibility_text`;
+- `restrictions_text`;
+- `applicant_types`;
+- `topics`;
+- `countries`;
+- `regions`;
+- `classification`.
+
+Schema contract:
+
+```text
+{
+  summary: string|null,
+  eligibility_text: string|null,
+  restrictions_text: string|null,
+  applicant_types: string[],
+  topics: string[],
+  countries: string[],
+  regions: string[],
+  classification: allowed classification value,
+  confidence: number between 0 and 1,
+  evidence: object
+}
+```
+
+Архітектурне рішення:
+
+- AI output не записується в raw fields/source payload;
+- AI output зберігається окремо в `extraction_metadata["llm"]`;
+- invalid/low-confidence AI result не merge-иться в normalized fields;
+- failed AI call не валить весь feature extraction job;
+- `--use-llm` лишається explicit opt-in switch.
+
+Acceptance:
+
+- AI не перезаписує deterministic fields без правила;
+- AI output traceable;
+- є fallback behavior без API key;
+- є tests для schema validation;
+- manual review reason пояснює AI uncertainty.
+
+Перевірка:
+
+```text
+poetry run python -m unittest tests.test_stage5_extraction
+poetry run python -m unittest
+poetry run python -m compileall grant_tool tests
+docker compose exec app python -m unittest tests.test_stage5_extraction
+curl -s -i http://localhost:8000/api/v1/health
+```
+
+Verification result:
+
+- targeted Stage 5 extraction tests returned `Ran 25 tests ... OK`;
+- full local suite returned `Ran 95 tests ... OK`;
+- compileall completed successfully.
+- Docker app image rebuilt and app service restarted successfully;
+- Docker targeted Stage 5 extraction tests returned `Ran 25 tests ... OK`;
 - Docker API health returned `HTTP/1.1 200 OK`.

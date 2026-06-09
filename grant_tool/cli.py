@@ -8,6 +8,7 @@ from grant_tool.client_import import ImportResult, import_application_history, i
 from grant_tool.config import get_settings
 from grant_tool.db.repositories import DataAuditSourceRow, GrantRepository, SearchQualityGateRow, SearchSourceReportRow
 from grant_tool.db.session import SessionLocal
+from grant_tool.deduplication import DeduplicationSummary, GrantDeduplicationService
 from grant_tool.embeddings import EmbeddingService, EmbeddingTarget
 from grant_tool.explanations import MatchExplanationService
 from grant_tool.extraction import FeatureExtractionService
@@ -334,6 +335,53 @@ def _cmd_extract_features(args: argparse.Namespace) -> None:
         print(f"- {error}")
 
 
+def _format_deduplication_summary(summary: DeduplicationSummary) -> list[str]:
+    lines = [
+        (
+            "Deduplication: "
+            f"processed={summary.processed_count} "
+            f"candidates={summary.candidate_count} "
+            f"duplicate_pairs={summary.duplicate_pair_count} "
+            f"duplicate_groups={summary.duplicate_group_count} "
+            f"duplicate_records={summary.duplicate_record_count} "
+            f"dry_run={'yes' if summary.dry_run else 'no'}"
+        )
+    ]
+    if summary.groups:
+        lines.append("duplicate groups:")
+        for group in summary.groups[:10]:
+            best_score = max((candidate.score for candidate in group.candidates), default=0)
+            lines.append(
+                f"  - {group.group_id}: primary={group.primary_grant_id} "
+                f"size={len(group.grant_ids)} best_score={best_score}"
+            )
+    if summary.candidates:
+        lines.append("top candidates:")
+        for candidate in summary.candidates[:10]:
+            reasons = ", ".join(candidate.reasons)
+            lines.append(
+                f"  - {candidate.score} duplicate={'yes' if candidate.duplicate else 'no'} "
+                f"{candidate.left_grant_id} <> {candidate.right_grant_id}: {reasons}"
+            )
+    return lines
+
+
+def _cmd_deduplicate(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = GrantDeduplicationService(repository=repository)
+        summary = service.run(
+            source_slug=args.source,
+            limit=args.limit,
+            dry_run=args.dry_run,
+        )
+        if not args.dry_run:
+            session.commit()
+
+    for line in _format_deduplication_summary(summary):
+        print(line)
+
+
 def _cmd_match(args: argparse.Namespace) -> None:
     with SessionLocal() as session:
         repository = GrantRepository(session)
@@ -478,6 +526,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use optional LLM extraction when OPENAI_API_KEY is configured",
     )
     extract_features.set_defaults(func=_cmd_extract_features)
+
+    deduplicate = subparsers.add_parser(
+        "deduplicate",
+        help="Run Step 5 duplicate candidate detection for stored grants",
+    )
+    deduplicate.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), default=None)
+    deduplicate.add_argument("--limit", type=int, default=None)
+    deduplicate.add_argument("--dry-run", action="store_true", help="Compute candidates without writing metadata")
+    deduplicate.set_defaults(func=_cmd_deduplicate)
 
     match = subparsers.add_parser(
         "match",

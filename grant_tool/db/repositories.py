@@ -1047,6 +1047,19 @@ class GrantRepository:
             query = query.limit(limit)
         return list(self.session.scalars(query))
 
+    def list_grants_for_deduplication(
+        self,
+        *,
+        source_slug: str | None = None,
+        limit: int | None = None,
+    ) -> list[Grant]:
+        query = select(Grant).options(selectinload(Grant.source)).order_by(Grant.updated_at.desc(), Grant.created_at.desc())
+        if source_slug is not None:
+            query = query.join(Source).where(Source.slug == source_slug)
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
     def list_application_history_for_client(self, client_profile_id: uuid.UUID) -> list[ApplicationHistory]:
         query = (
             select(ApplicationHistory)

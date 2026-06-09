@@ -17,6 +17,29 @@ from grant_tool.ingestion.utils import clean_text, extract_deadline, extract_fun
 
 
 NORMALIZATION_VERSION = "stage5-deterministic-v2"
+LLM_EXTRACTION_VERSION = "data-preparation-step6-v1"
+LLM_MIN_CONFIDENCE = Decimal("0.5500")
+LLM_ALLOWED_CLASSIFICATIONS = {
+    "grant",
+    "business_support",
+    "finance_program",
+    "opportunity",
+    "digest",
+    "news",
+    "article",
+    "event",
+    "webinar",
+    "training",
+    "tender",
+    "unknown",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LlmFallbackDecision:
+    allowed: bool
+    reasons: tuple[str, ...]
+    skipped_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -166,15 +189,18 @@ class FeatureExtractionService:
         self._extract_text_features(draft, content_text, fields)
         normalization = normalize_grant_draft(draft, source_slug=source_slug, text=content_text, fields=fields)
         metadata = dict(draft.extraction_metadata or metadata)
+        llm_applied = False
 
         if self.use_llm:
-            self._apply_llm_extraction(draft, text, fields)
-            normalization = normalize_grant_draft(draft, source_slug=source_slug, text=content_text, fields=fields)
+            decision = self._llm_fallback_decision(draft, content_text)
+            llm_applied = self._apply_llm_extraction(draft, text, fields, fallback_decision=decision)
+            if llm_applied:
+                normalization = normalize_grant_draft(draft, source_slug=source_slug, text=content_text, fields=fields)
             metadata = dict(draft.extraction_metadata or metadata)
 
         confidence = self._confidence(draft, text)
         draft.extraction_confidence = confidence
-        draft.extraction_method = "deterministic_llm" if self.use_llm and metadata.get("llm", {}).get("status") == "success" else "deterministic"
+        draft.extraction_method = "deterministic_llm" if llm_applied and metadata.get("llm", {}).get("status") == "success" else "deterministic"
         if self._needs_manual_review(draft, text):
             draft.needs_manual_review = True
             draft.manual_review_reason = draft.manual_review_reason or self._manual_review_reason(draft, text)
@@ -268,44 +294,245 @@ class FeatureExtractionService:
         draft: NormalizedGrantDraft,
         text: str,
         fields: dict[str, Any],
-    ) -> None:
-        metadata = draft.extraction_metadata or {}
+        *,
+        fallback_decision: LlmFallbackDecision,
+    ) -> bool:
+        metadata = dict(draft.extraction_metadata or {})
+        if not fallback_decision.allowed:
+            metadata["llm"] = {
+                "status": "skipped",
+                "version": LLM_EXTRACTION_VERSION,
+                "reason": fallback_decision.skipped_reason or "deterministic extraction sufficient",
+                "fallback_reasons": list(fallback_decision.reasons),
+            }
+            draft.extraction_metadata = metadata
+            return False
+
         settings = get_settings()
         if self.llm_client is None and not settings.openai_api_key:
-            metadata["llm"] = {"status": "skipped", "reason": "OPENAI_API_KEY is not configured"}
+            reason = "OPENAI_API_KEY is not configured"
+            metadata["llm"] = {
+                "status": "skipped",
+                "version": LLM_EXTRACTION_VERSION,
+                "reason": reason,
+                "fallback_reasons": list(fallback_decision.reasons),
+            }
             draft.extraction_metadata = metadata
-            return
+            draft.needs_manual_review = True
+            draft.manual_review_reason = FeatureExtractionService._append_review_reason(
+                draft.manual_review_reason,
+                f"AI fallback skipped: {reason}",
+            )
+            return False
+
         client = self.llm_client or OpenAIExtractionClient(api_key=settings.openai_api_key or "", model=settings.llm_model)
-        result = client.extract(draft=draft, text=text)
-        metadata["llm"] = result.get("metadata", {"status": "success"})
-        self._merge_llm_result(draft, result, fields)
+        try:
+            result = client.extract(draft=draft, text=text)
+        except Exception as exc:
+            metadata["llm"] = {
+                "status": "error",
+                "version": LLM_EXTRACTION_VERSION,
+                "reason": str(exc),
+                "fallback_reasons": list(fallback_decision.reasons),
+            }
+            draft.extraction_metadata = metadata
+            draft.needs_manual_review = True
+            draft.manual_review_reason = FeatureExtractionService._append_review_reason(
+                draft.manual_review_reason,
+                "AI fallback error",
+            )
+            return False
+
+        validated, schema_errors = self._validate_llm_result(result)
+        result_metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        if schema_errors:
+            metadata["llm"] = {
+                "status": "invalid",
+                "version": LLM_EXTRACTION_VERSION,
+                "provider": result_metadata.get("provider"),
+                "model": result_metadata.get("model"),
+                "schema_errors": schema_errors,
+                "fallback_reasons": list(fallback_decision.reasons),
+                "output": validated,
+            }
+            draft.extraction_metadata = metadata
+            draft.needs_manual_review = True
+            draft.manual_review_reason = FeatureExtractionService._append_review_reason(
+                draft.manual_review_reason,
+                f"AI fallback invalid: {'; '.join(schema_errors[:3])}",
+            )
+            return False
+
+        confidence = self._decimal(validated.get("confidence"), default=Decimal("0.0000"))
+        if confidence < LLM_MIN_CONFIDENCE:
+            metadata["llm"] = {
+                "status": "low_confidence",
+                "version": LLM_EXTRACTION_VERSION,
+                "provider": result_metadata.get("provider"),
+                "model": result_metadata.get("model"),
+                "confidence": str(confidence),
+                "fallback_reasons": list(fallback_decision.reasons),
+                "output": validated,
+            }
+            draft.extraction_metadata = metadata
+            draft.needs_manual_review = True
+            draft.manual_review_reason = FeatureExtractionService._append_review_reason(
+                draft.manual_review_reason,
+                f"AI fallback low confidence: {confidence}",
+            )
+            return False
+
+        applied_fields = self._merge_llm_result(draft, validated, fields, metadata)
+        metadata["llm"] = {
+            "status": "success",
+            "version": LLM_EXTRACTION_VERSION,
+            "provider": result_metadata.get("provider"),
+            "model": result_metadata.get("model"),
+            "confidence": str(confidence),
+            "fallback_reasons": list(fallback_decision.reasons),
+            "applied_fields": applied_fields,
+            "output": validated,
+        }
         draft.extraction_metadata = metadata
+        return bool(applied_fields)
 
     @staticmethod
-    def _merge_llm_result(draft: NormalizedGrantDraft, result: dict[str, Any], fields: dict[str, Any]) -> None:
+    def _llm_fallback_decision(draft: NormalizedGrantDraft, text: str) -> LlmFallbackDecision:
+        reasons: list[str] = []
+        if len(text) < 80:
+            return LlmFallbackDecision(
+                allowed=False,
+                reasons=(),
+                skipped_reason="insufficient source text for AI fallback",
+            )
+        if not draft.summary or len(draft.summary) < 80:
+            reasons.append("weak_summary")
+        if not draft.eligibility_text:
+            reasons.append("missing_eligibility")
+        if not draft.applicant_types:
+            reasons.append("missing_applicant_types")
+        if not draft.topics:
+            reasons.append("missing_topics")
+        if not (draft.countries or draft.regions or draft.geography_text):
+            reasons.append("missing_geography")
+        if FeatureExtractionService._needs_manual_review(draft, text):
+            reasons.append("manual_review_risk")
+        if not reasons:
+            return LlmFallbackDecision(
+                allowed=False,
+                reasons=(),
+                skipped_reason="deterministic extraction sufficient",
+            )
+        return LlmFallbackDecision(allowed=True, reasons=tuple(dict.fromkeys(reasons)))
+
+    @staticmethod
+    def _validate_llm_result(result: Any) -> tuple[dict[str, Any], list[str]]:
+        errors: list[str] = []
+        if not isinstance(result, dict):
+            return {}, ["result must be a JSON object"]
+
+        validated: dict[str, Any] = {}
         for name in ("summary", "eligibility_text", "restrictions_text"):
+            value = result.get(name)
+            if value is None:
+                continue
+            cleaned = clean_text(str(value))
+            if cleaned:
+                validated[name] = cleaned[:1200]
+
+        for name in ("applicant_types", "topics", "countries", "regions"):
+            value = result.get(name)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                errors.append(f"{name} must be a list")
+                continue
+            cleaned_values = []
+            for item in value[:12]:
+                cleaned = clean_text(str(item))
+                if cleaned and cleaned not in cleaned_values:
+                    cleaned_values.append(cleaned[:80])
+            validated[name] = cleaned_values
+
+        classification = clean_text(result.get("classification"))
+        if classification:
+            classification = classification.lower().replace("-", "_").replace(" ", "_")
+            if classification not in LLM_ALLOWED_CLASSIFICATIONS:
+                errors.append("classification is not allowed")
+            else:
+                validated["classification"] = classification
+
+        confidence = FeatureExtractionService._decimal(result.get("confidence"), default=Decimal("-1"))
+        if confidence < Decimal("0.0000") or confidence > Decimal("1.0000"):
+            errors.append("confidence must be a number between 0 and 1")
+        else:
+            validated["confidence"] = str(confidence)
+
+        evidence = result.get("evidence")
+        if evidence is not None:
+            if not isinstance(evidence, dict):
+                errors.append("evidence must be an object")
+            else:
+                validated["evidence"] = {
+                    str(key)[:80]: clean_text(str(value))[:500]
+                    for key, value in evidence.items()
+                    if clean_text(str(value))
+                }
+
+        supported_fields = set(validated) - {"confidence", "evidence"}
+        if not supported_fields:
+            errors.append("result has no supported extraction fields")
+        return validated, errors
+
+    @staticmethod
+    def _merge_llm_result(
+        draft: NormalizedGrantDraft,
+        result: dict[str, Any],
+        fields: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> list[str]:
+        applied_fields: list[str] = []
+        confidence = FeatureExtractionService._decimal(result.get("confidence"), default=Decimal("0.65"))
+        text_field_rules = {
+            "summary": lambda current: not current or len(current) < 80,
+            "eligibility_text": lambda current: not current,
+            "restrictions_text": lambda current: not current,
+        }
+        for name, can_apply in text_field_rules.items():
             value = clean_text(result.get(name))
-            if value and not getattr(draft, name):
+            current = getattr(draft, name)
+            if value and can_apply(current):
                 setattr(draft, name, value)
+                applied_fields.append(name)
                 FeatureExtractionService._set_field_evidence(
                     fields,
                     name,
                     "llm",
-                    FeatureExtractionService._decimal(result.get("confidence"), default=Decimal("0.65")),
+                    confidence,
                     value,
                 )
-        for name in ("applicant_types", "topics"):
+        for name in ("applicant_types", "topics", "countries", "regions"):
             values = result.get(name)
             if isinstance(values, list):
-                merged = FeatureExtractionService._merge_list(getattr(draft, name), [clean_text(str(value)) for value in values])
-                setattr(draft, name, [value for value in merged if value])
-                FeatureExtractionService._set_field_evidence(
-                    fields,
-                    name,
-                    "llm",
-                    FeatureExtractionService._decimal(result.get("confidence"), default=Decimal("0.65")),
-                    "; ".join(getattr(draft, name)),
-                )
+                before = list(getattr(draft, name) or [])
+                merged = FeatureExtractionService._merge_list(before, [clean_text(str(value)) for value in values])
+                cleaned = [value for value in merged if value]
+                if cleaned != before:
+                    setattr(draft, name, cleaned)
+                    applied_fields.append(name)
+                    FeatureExtractionService._set_field_evidence(
+                        fields,
+                        name,
+                        "llm",
+                        confidence,
+                        "; ".join(cleaned),
+                    )
+        classification = clean_text(result.get("classification"))
+        if classification and classification in LLM_ALLOWED_CLASSIFICATIONS and not metadata.get("classification"):
+            metadata["classification"] = classification
+            applied_fields.append("classification")
+            FeatureExtractionService._set_field_evidence(fields, "classification", "llm", confidence, classification)
+        return applied_fields
 
     @staticmethod
     def _draft_from_grant(grant: Grant) -> NormalizedGrantDraft:
@@ -1186,6 +1413,13 @@ class FeatureExtractionService:
         return "; ".join(reasons) or "low extraction confidence"
 
     @staticmethod
+    def _append_review_reason(current: str | None, reason: str) -> str:
+        reasons = [item.strip() for item in (current or "").split(";") if item.strip()]
+        if reason not in reasons:
+            reasons.append(reason)
+        return "; ".join(reasons)
+
+    @staticmethod
     def _feature_card(draft: NormalizedGrantDraft) -> dict[str, Any]:
         return {
             "title": draft.title,
@@ -1236,10 +1470,15 @@ class OpenAIExtractionClient:
         import httpx
 
         prompt = (
-            "Extract only factual grant fields from the provided source text. "
-            "Do not infer facts that are not explicitly supported. "
-            "Return compact JSON with keys: summary, eligibility_text, applicant_types, topics, "
-            "restrictions_text, confidence, evidence."
+            "You are a controlled fallback extractor for grant records. "
+            "Extract only facts explicitly supported by the source text. "
+            "Do not infer or invent missing fields. "
+            "Return compact JSON with this schema: "
+            "{summary: string|null, eligibility_text: string|null, restrictions_text: string|null, "
+            "applicant_types: string[], topics: string[], countries: string[], regions: string[], "
+            "classification: one of grant,business_support,finance_program,opportunity,digest,news,article,event,webinar,training,tender,unknown, "
+            "confidence: number between 0 and 1, evidence: object}. "
+            "Use empty arrays/null when evidence is missing."
         )
         payload = {
             "model": self.model,

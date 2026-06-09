@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from grant_tool.cli import _format_quality_gate_report, _format_search_report
+from grant_tool.cli import _format_deduplication_summary, _format_quality_gate_report, _format_search_report
 from grant_tool.db.repositories import SearchQualityGateRow, SearchQualityGrantSample, SearchSourceReportRow
+from grant_tool.deduplication import DeduplicationSummary, DuplicateCandidate, DuplicateGroup
 
 
 class Stage8SearchReportTestCase(unittest.TestCase):
@@ -100,6 +102,39 @@ class Stage8SearchReportTestCase(unittest.TestCase):
         self.assertIn("hromady | yes | 5/10 | 6 | 1 | blocked", output)
         self.assertIn("gurt | no | 0/10 | 0 | 0 | excluded", output)
         self.assertIn("Грантова програма для МСП", output)
+
+    def test_step5_cli_deduplication_summary_shows_groups_and_candidates(self) -> None:
+        candidate = DuplicateCandidate(
+            left_grant_id="grant-a",
+            right_grant_id="grant-b",
+            score=Decimal("0.9200"),
+            reasons=("exact_normalized_title", "same_deadline"),
+            duplicate=True,
+        )
+        summary = DeduplicationSummary(
+            processed_count=2,
+            candidate_count=1,
+            duplicate_pair_count=1,
+            duplicate_group_count=1,
+            duplicate_record_count=1,
+            candidates=(candidate,),
+            groups=(
+                DuplicateGroup(
+                    group_id="dup-test",
+                    primary_grant_id="grant-a",
+                    grant_ids=("grant-a", "grant-b"),
+                    candidates=(candidate,),
+                ),
+            ),
+        )
+
+        output = "\n".join(_format_deduplication_summary(summary))
+
+        self.assertIn("Deduplication: processed=2 candidates=1 duplicate_pairs=1", output)
+        self.assertIn("duplicate groups:", output)
+        self.assertIn("dup-test: primary=grant-a size=2 best_score=0.9200", output)
+        self.assertIn("top candidates:", output)
+        self.assertIn("grant-a <> grant-b: exact_normalized_title, same_deadline", output)
 
 
 if __name__ == "__main__":
