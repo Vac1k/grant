@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from grant_tool.config import get_settings
-from grant_tool.data_quality import normalize_grant_draft
+from grant_tool.data_quality import apply_grant_quality_score, normalize_grant_draft
 from grant_tool.db.models import Grant, JobRun, JobType
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.types import FetchedGrant, NormalizedGrantDraft
@@ -200,7 +200,6 @@ class FeatureExtractionService:
 
         confidence = self._confidence(draft, text)
         draft.extraction_confidence = confidence
-        draft.extraction_method = "deterministic_llm" if llm_applied and metadata.get("llm", {}).get("status") == "success" else "deterministic"
         if self._needs_manual_review(draft, text):
             draft.needs_manual_review = True
             draft.manual_review_reason = draft.manual_review_reason or self._manual_review_reason(draft, text)
@@ -262,6 +261,7 @@ class FeatureExtractionService:
                         status=draft.status,
                         **draft.to_grant_fields(),
                     )
+                    apply_grant_quality_score(grant)
                     self.repository.increment_job_counters(job, processed=1, updated=1)
                     updated += 1
                 except Exception as exc:
@@ -544,9 +544,7 @@ class FeatureExtractionService:
             application_url=grant.application_url,
             summary=grant.summary,
             description_text=grant.description_text,
-            language=grant.language,
             published_at=grant.published_at,
-            opens_at=grant.opens_at,
             deadline_at=grant.deadline_at,
             deadline_text=grant.deadline_text,
             program_name=grant.program_name,
@@ -565,15 +563,10 @@ class FeatureExtractionService:
             topics=list(grant.topics or []),
             keywords=list(grant.keywords or []),
             restrictions_text=grant.restrictions_text,
-            cofinancing_required=grant.cofinancing_required,
             cofinancing_text=grant.cofinancing_text,
-            consortium_required=grant.consortium_required,
             consortium_text=grant.consortium_text,
-            implementation_period_text=grant.implementation_period_text,
-            contact_text=grant.contact_text,
             documents=list(grant.documents or []),
             source_metadata=dict(grant.source_metadata or {}),
-            extraction_method=grant.extraction_method or "deterministic",
             extraction_confidence=grant.extraction_confidence,
             extraction_metadata=dict(grant.extraction_metadata or {}),
             needs_manual_review=grant.needs_manual_review,
@@ -603,12 +596,8 @@ class FeatureExtractionService:
         draft.topics = []
         draft.keywords = []
         draft.restrictions_text = None
-        draft.cofinancing_required = None
         draft.cofinancing_text = None
-        draft.consortium_required = None
         draft.consortium_text = None
-        draft.implementation_period_text = None
-        draft.contact_text = None
         draft.extraction_confidence = None
         draft.extraction_metadata = {}
         draft.needs_manual_review = False
@@ -1329,24 +1318,14 @@ class FeatureExtractionService:
             FeatureExtractionService._set_field_evidence(fields, "restrictions_text", "deterministic", Decimal("0.58"), restrictions)
 
         cofinancing = FeatureExtractionService._snippet(text, ("cofinancing", "co-financing", "co funding", "co-funding", "співфінанс"))
-        if cofinancing:
-            draft.cofinancing_required = True
-            draft.cofinancing_text = draft.cofinancing_text or cofinancing
-            FeatureExtractionService._set_field_evidence(fields, "cofinancing_required", "deterministic", Decimal("0.70"), cofinancing)
+        if cofinancing and not draft.cofinancing_text:
+            draft.cofinancing_text = cofinancing
+            FeatureExtractionService._set_field_evidence(fields, "cofinancing_text", "deterministic", Decimal("0.70"), cofinancing)
 
         consortium = FeatureExtractionService._snippet(text, ("consortium", "consortia", "консорці", "партнер"))
-        if consortium:
-            draft.consortium_required = True
-            draft.consortium_text = draft.consortium_text or consortium
-            FeatureExtractionService._set_field_evidence(fields, "consortium_required", "deterministic", Decimal("0.70"), consortium)
-
-        implementation = FeatureExtractionService._snippet(text, ("implementation period", "duration", "тривалість", "період реалізації"))
-        if implementation and not draft.implementation_period_text:
-            draft.implementation_period_text = implementation
-
-        contact = FeatureExtractionService._snippet(text, ("contact", "email", "e-mail", "@", "контакт"))
-        if contact and not draft.contact_text:
-            draft.contact_text = contact
+        if consortium and not draft.consortium_text:
+            draft.consortium_text = consortium
+            FeatureExtractionService._set_field_evidence(fields, "consortium_text", "deterministic", Decimal("0.70"), consortium)
 
     @staticmethod
     def _snippet(text: str, keywords: tuple[str, ...], *, radius: int = 240) -> str | None:

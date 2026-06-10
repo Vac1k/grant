@@ -350,7 +350,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(len(result.grants), 1)
         grant = result.grants[0].normalized
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "uk")
         self.assertTrue(grant.documents)
 
     def test_diia_business_connector_parses_api_finance_service(self) -> None:
@@ -452,7 +451,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "101")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "uk")
         self.assertEqual(grant.funding_amount_text, "300 000 грн")
         self.assertTrue(grant.documents)
 
@@ -477,7 +475,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "202")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "en")
         self.assertTrue(grant.needs_manual_review)
         self.assertIn("official EU Funding", grant.manual_review_reason)
 
@@ -502,7 +499,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "303")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "uk")
         self.assertEqual(grant.opportunity_type, "grant")
 
     def test_nipo_connector_marks_digest_review(self) -> None:
@@ -526,7 +522,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "404")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "uk")
         self.assertEqual(grant.funding_amount_text, "500 000 грн")
         self.assertTrue(grant.documents)
         self.assertTrue(grant.needs_manual_review)
@@ -559,7 +554,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         self.assertEqual(grant.source_record_id, detail_url)
         self.assertEqual(grant.title, "Грант на консалтингові послуги")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "uk")
         self.assertTrue(grant.documents)
 
     def test_fundsforngos_connector_marks_broad_source_review(self) -> None:
@@ -583,7 +577,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "505")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "en")
         self.assertIn("USD 25,000", grant.funding_amount_text or "")
         self.assertTrue(grant.needs_manual_review)
         self.assertIn("Broad international", grant.manual_review_reason)
@@ -609,7 +602,6 @@ class Stage3IngestionTestCase(unittest.TestCase):
         grant = result.grants[0].normalized
         self.assertEqual(grant.source_record_id, "606")
         self.assertEqual(grant.status, "open")
-        self.assertEqual(grant.language, "en")
         self.assertIn("EUR 50,000", grant.funding_amount_text or "")
         self.assertTrue(grant.documents)
         self.assertTrue(grant.needs_manual_review)

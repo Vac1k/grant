@@ -28,19 +28,6 @@
   </article>
 </section>
 
-{% if latest_report %}
-<section class="panel">
-  <div class="panel-heading">
-    <div>
-      <p class="eyebrow">Saved report</p>
-      <h2>{{ latest_report.title }}</h2>
-    </div>
-    <span class="muted">{{ latest_report.generated_at }}</span>
-  </div>
-  <pre class="report-content">{{ latest_report.content }}</pre>
-</section>
-{% endif %}
-
 <section class="panel">
   <div class="panel-heading">
     <div>

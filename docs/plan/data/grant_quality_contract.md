@@ -166,12 +166,8 @@ Advanced fields:
 - `program_name`;
 - `keywords`;
 - `restrictions_text`;
-- `cofinancing_required`;
 - `cofinancing_text`;
-- `consortium_required`;
 - `consortium_text`;
-- `implementation_period_text`;
-- `contact_text`;
 - `documents`;
 - `extraction_confidence`;
 - `extraction_metadata`;
@@ -259,10 +255,17 @@ Step 5 implemented soft deduplication metadata and matching gate behavior for no
 
 Step 6 implemented validated optional AI fallback for weak extraction fields. AI output is stored under `extraction_metadata.llm`; validated AI classification may populate `extraction_metadata.classification` only when no existing classification is present.
 
-The contract still does not:
+Step 7 implemented persisted deterministic quality scoring on top of this contract:
 
-- persist `quality_score`;
-- add DB columns;
-- delete noise records;
+- `grants.quality_score`: deterministic `0-100` score;
+- `grants.quality_tier`: persisted contract tier;
+- `grants.quality_flags`: persisted contract flag values;
+- `extraction_metadata.quality`: explainable component/penalty breakdown with scoring version;
+- score components: core fields (40), important optional fields (30), advanced fields as weak signal (max 5), summary/description richness (10), status (5), source family (10);
+- penalties: noise classification (60), manual review (15), uncertain source classification (10), low extraction confidence (10), possible duplicate (10), broad finance program (5);
+- scoring runs inside `extract-features`, after `deduplicate`, and on demand via `grant-tool quality-score`;
+- matching hard-filters records with persisted score below the threshold (`quality_gate:low_quality_score:<score>`, default threshold 40) unless `--include-low-quality` is passed.
 
-Persisted scoring/flags and prepared data structures belong to Step 7 and Step 8.
+Step 8 implemented the prepared grants layer as persisted quality fields on `grants` plus `GrantRepository.list_prepared_grants` and dashboard quality state. No separate `prepared_grants` table or view was created; the decision is documented in `implemented_for_data.md`.
+
+The contract still does not delete noise records; they stay soft-rejected via tier, flags, and the matching gate.

@@ -22,7 +22,6 @@ from grant_tool.db.models import (
     JobType,
     MatchRun,
     RawGrantSnapshot,
-    Report,
     Source,
 )
 from grant_tool.ingestion.types import DetailFetchStatus, DiscoveredGrantItemDraft, DiscoveryStatus
@@ -167,7 +166,6 @@ class GrantRepository:
         api_url: str | None = None,
         feed_url: str | None = None,
         sitemap_url: str | None = None,
-        requires_browser: bool = False,
         enabled: bool = True,
         rate_limit_seconds: int = 5,
         notes: str | None = None,
@@ -182,7 +180,6 @@ class GrantRepository:
             "api_url": api_url,
             "feed_url": feed_url,
             "sitemap_url": sitemap_url,
-            "requires_browser": requires_browser,
             "enabled": enabled,
             "rate_limit_seconds": rate_limit_seconds,
             "notes": notes,
@@ -1060,6 +1057,47 @@ class GrantRepository:
             query = query.limit(limit)
         return list(self.session.scalars(query))
 
+    def list_grants_for_quality_scoring(
+        self,
+        *,
+        source_slug: str | None = None,
+        limit: int | None = None,
+    ) -> list[Grant]:
+        query = select(Grant).options(selectinload(Grant.source)).order_by(Grant.updated_at.desc(), Grant.created_at.desc())
+        if source_slug is not None:
+            query = query.join(Source).where(Source.slug == source_slug)
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
+    def list_prepared_grants(
+        self,
+        *,
+        min_quality_score: int | None = None,
+        include_unscored: bool = True,
+        limit: int | None = None,
+    ) -> list[Grant]:
+        """Step 8 prepared set: scored records whose persisted tier allows matching.
+
+        Unscored records (quality_tier IS NULL) are included by default so the
+        prepared set degrades gracefully before the first quality-score run.
+        """
+        prepared_tiers = ["match_ready", "usable_with_warnings"]
+        tier_condition = Grant.quality_tier.in_(prepared_tiers)
+        if min_quality_score is not None:
+            tier_condition = and_(tier_condition, Grant.quality_score >= min_quality_score)
+        condition = or_(tier_condition, Grant.quality_tier.is_(None)) if include_unscored else tier_condition
+
+        query = (
+            select(Grant)
+            .options(selectinload(Grant.source))
+            .where(condition)
+            .order_by(Grant.quality_score.desc().nullslast(), Grant.updated_at.desc())
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
+
     def list_application_history_for_client(self, client_profile_id: uuid.UUID) -> list[ApplicationHistory]:
         query = (
             select(ApplicationHistory)
@@ -1166,14 +1204,12 @@ class GrantRepository:
         self,
         *,
         name: str | None = None,
-        run_type: str = "manual",
         status: str = "pending",
         parameters: dict[str, Any] | None = None,
         notes: str | None = None,
     ) -> MatchRun:
         match_run = MatchRun(
             name=name,
-            run_type=run_type,
             status=status,
             parameters=parameters or {},
             notes=notes,
@@ -1240,27 +1276,3 @@ class GrantRepository:
 
         self.session.flush()
         return match
-
-    def save_report(
-        self,
-        *,
-        title: str,
-        content: str,
-        match_run_id: uuid.UUID | None = None,
-        report_type: str = "daily",
-        format: str = "markdown",
-        summary: str | None = None,
-        report_metadata: dict[str, Any] | None = None,
-    ) -> Report:
-        report = Report(
-            match_run_id=match_run_id,
-            title=title,
-            report_type=report_type,
-            format=format,
-            summary=summary,
-            content=content,
-            report_metadata=report_metadata or {},
-        )
-        self.session.add(report)
-        self.session.flush()
-        return report

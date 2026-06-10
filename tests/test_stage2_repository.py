@@ -89,19 +89,12 @@ class RepositoryTestCase(unittest.TestCase):
             history_score=Decimal("0.2000"),
             explanation="Strong topic and country fit.",
         )
-        report = self.repository.save_report(
-            title="Daily report",
-            content="# Daily report",
-            match_run_id=match_run.id,
-        )
-
         self.assertEqual(source.access_strategy, "api")
         self.assertEqual(snapshot.id, duplicate_snapshot.id)
         self.assertEqual(grant.latest_raw_snapshot_id, snapshot.id)
         self.assertEqual(client.country, "Ukraine")
         self.assertEqual(history.result, "lost")
         self.assertEqual(match.score, Decimal("0.8123"))
-        self.assertEqual(report.match_run_id, match_run.id)
 
     def test_stage1_discovered_item_upsert_tracks_known_items(self) -> None:
         source = self.repository.upsert_source(
@@ -396,7 +389,7 @@ class RepositoryTestCase(unittest.TestCase):
         self.assertTrue(job.job_metadata["done"])
 
     def test_stage25_job_failure_and_partial_statuses(self) -> None:
-        failed_job = self.repository.start_job(job_type=JobType.REPORT)
+        failed_job = self.repository.start_job(job_type=JobType.QUALITY_SCORE)
         self.repository.finish_job_failed(failed_job, error_message="template error")
 
         partial_job = self.repository.start_job(job_type=JobType.INGESTION)

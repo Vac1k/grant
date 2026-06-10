@@ -26,6 +26,11 @@
     <strong>{{ stats.matches_total }}</strong>
     <small>{{ stats.explained_matches }} explained</small>
   </article>
+  <article class="metric accent-green">
+    <span>Prepared for matching</span>
+    <strong>{{ stats.grants_prepared }}</strong>
+    <small>{{ stats.grants_noise }} noise · {{ stats.grants_unscored }} unscored</small>
+  </article>
 </section>
 
 <section class="two-column">
@@ -45,6 +50,12 @@
       </div>
       {% else %}
       <p class="empty">No grants yet.</p>
+      {% endfor %}
+      {% for tier, count in stats.quality_tier_counts.items()|sort %}
+      <div class="distribution-row">
+        <span>quality: {{ tier }}</span>
+        <strong>{{ count }}</strong>
+      </div>
       {% endfor %}
     </div>
   </article>

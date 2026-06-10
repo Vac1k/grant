@@ -138,8 +138,6 @@ class EUFundingConnector(BaseConnector):
             summary=first_text(item.get("summary")) or first_text(metadata.get("summary")),
             description_text=first_text(metadata.get("description")) or first_text(item.get("description")),
             status=first_text(metadata.get("status")) or "unknown",
-            language="en",
-            opens_at=parse_datetime(first_text(metadata.get("openingDate"))),
             deadline_at=parse_datetime(deadline_text),
             deadline_text=deadline_text,
             program_name=first_text(metadata.get("frameworkProgramme")) or first_text(metadata.get("programme")),

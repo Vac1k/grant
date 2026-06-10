@@ -13,7 +13,7 @@
 
 ## Поточний Статус Етапу Data Preparation
 
-Етап підготовки даних грантів ще не завершений.
+Етап підготовки даних грантів завершений.
 
 Фактичний стан:
 
@@ -25,7 +25,9 @@
 - Step 4 critical field normalization реалізований у deterministic extraction flow;
 - Step 5 deduplication реалізований як soft-dedup metadata layer і matching gate;
 - Step 6 AI fallback for extraction реалізований як контрольований optional fallback;
-- наступний відкритий крок - `Step 7: Quality Score`.
+- Step 7 quality score реалізований як persisted deterministic score/tier/flags;
+- Step 8 prepared grants layer реалізований як persisted quality fields у `grants` плюс repository prepared set і dashboard quality state;
+- додатково проведена ревізія полів БД: видалені overengineered поля і таблиця `reports`.
 
 ## Реалізовано
 
@@ -622,3 +624,157 @@ Verification result:
 - Docker app image rebuilt and app service restarted successfully;
 - Docker targeted Stage 5 extraction tests returned `Ran 25 tests ... OK`;
 - Docker API health returned `HTTP/1.1 200 OK`.
+
+### Step 7: Quality Score
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-10`.
+
+Дата Docker/live validation: `2026-06-10`.
+
+Мета Step 7 була додати вимірювану, deterministic якість кожного grant record і не пускати слабкі records у matching без явного дозволу.
+
+Реалізовано:
+
+- persisted поля в `grants`:
+  - `quality_score` (`0-100`, integer);
+  - `quality_tier` (contract tier value);
+  - `quality_flags` (JSON list contract flag values);
+- explainable breakdown в `extraction_metadata["quality"]`:
+  - `version`, `score`, `tier`, `classification`, `flags`, `components`, `penalties`, `matching_ready`, `min_matching_quality_score`;
+- pure scoring layer:
+  - `grant_tool/data_quality/scoring.py`:
+    - `compute_grant_quality_score`;
+    - `apply_grant_quality_score`;
+    - `QUALITY_SCORING_VERSION = "data-preparation-step7-v1"`;
+    - `DEFAULT_MIN_MATCHING_QUALITY_SCORE = 40`;
+- scoring service з JobRun audit:
+  - `grant_tool/data_quality/service.py` (`QualityScoringService`, `JobType.QUALITY_SCORE`);
+- CLI:
+  - `grant-tool quality-score`;
+  - `grant-tool quality-score --dry-run`;
+  - `grant-tool quality-score --source <slug> --limit N --min-score N`;
+- автоматичне оновлення persisted score:
+  - після Stage 5 `extract-features` (per-grant після `update_grant_features`);
+  - після `deduplicate` (бо duplicate flags впливають на score);
+- matching gate:
+  - hard filter `quality_gate:low_quality_score:<score>` для records з persisted score нижче порога;
+  - `grant-tool match --include-low-quality` як явний дозвіл;
+  - `grant-tool match --min-quality-score N` для зміни порога;
+  - matching evidence містить `persisted_score` і `persisted_tier`;
+- Alembic migration `20260610_0005` з робочим downgrade;
+- tests: `tests/test_data_quality_score.py`.
+
+Формула score (deterministic, компоненти сумуються до 100):
+
+- core fields: 40 (title 10, source_url 10, context text 10, valid status 10);
+- important optional fields: 30 (deadline 8, funder 4, amount 4, currency 2, country 4, region 1, eligibility 4, application_url 2, published_at 1);
+- advanced fields як слабкий сигнал: max 5 (program_name, keywords, restrictions_text, funding_amount_max, documents);
+- text richness: 10 (summary >= 80 chars 5, description >= 300 chars 5);
+- status: open 5, unknown 2, closed 0;
+- source family: structured_direct 10, useful_incomplete 7, unknown 5, aggregator 4, digest_heavy 2, empty_or_problem 0.
+
+Penalties:
+
+- noise classification: 60;
+- needs_manual_review: 15;
+- source_classification_uncertain: 10;
+- low_extraction_confidence: 10;
+- possible_duplicate: 10;
+- broad_finance_program: 5.
+
+Acceptance:
+
+- score deterministic (покрито tests);
+- flags explainable (persisted значення contract flags, breakdown у metadata);
+- є CLI/report для перегляду score по source і tier;
+- records з низьким score не використовуються в matching без явного дозволу (`--include-low-quality`).
+
+Перевірка:
+
+```text
+poetry run python -m unittest
+docker compose exec app alembic upgrade head
+docker compose exec app alembic downgrade 20260522_0004 && docker compose exec app alembic upgrade head
+docker compose exec app grant-tool quality-score --dry-run
+docker compose exec app grant-tool quality-score
+docker compose exec app grant-tool deduplicate
+docker compose exec app grant-tool match --top-n 5 --min-score 0.20 --use-vector
+docker compose exec app python -m unittest
+curl -s -i http://localhost:8000/api/v1/health
+```
+
+Live result на поточному локальному dataset (419 grants):
+
+- `processed=419 avg=57.6 low_score(<40)=14 matching_ready=128`;
+- tiers: `needs_review=266 usable_with_warnings=139 noise_rejected=14`;
+- migration upgrade/downgrade roundtrip пройшов на Postgres;
+- повний container test suite: `Ran 104 tests ... OK`;
+- API health: `200`.
+
+### Step 8: Prepared Grants Layer
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-10`.
+
+Мета Step 8 була дати зрозумілий prepared шар даних для matching, dashboard і AI-рекомендацій.
+
+Задокументоване архітектурне рішення:
+
+- окрема таблиця `prepared_grants`, materialized view або SQL view НЕ створюються;
+- prepared layer = persisted quality fields у `grants` (`quality_score`, `quality_tier`, `quality_flags`) плюс query layer;
+- причина: дані вже нормалізовані в `grants`, dedup/score metadata зберігаються поряд із record, а окрема таблиця додала б синхронізаційний ризик без нової інформації;
+- якщо в майбутньому потрібен буде окремий serving layer, рішення можна переглянути після появи реального performance вимірювання.
+
+Реалізовано:
+
+- repository prepared set:
+  - `GrantRepository.list_prepared_grants(min_quality_score, include_unscored, limit)`;
+  - prepared tiers: `match_ready`, `usable_with_warnings`;
+  - unscored records (tier `NULL`) включаються за замовчуванням, щоб шар деградував м'яко до першого quality-score run;
+- dashboard quality state:
+  - stats: `grants_prepared`, `grants_noise`, `grants_unscored`, `quality_tier_counts`;
+  - overview: metric "Prepared for matching" і tier distribution;
+  - grants page: quality filter (`prepared`, `match_ready`, `usable_with_warnings`, `needs_review`, `noise_rejected`, `unscored`), score/tier на card і `noise` tag;
+- matching використовує live contract evaluation плюс persisted score gate (Step 7), тому noise/low-score records не потрапляють у matching set без explicit override;
+- tests: prepared set у `tests/test_data_quality_score.py`, dashboard quality state у `tests/test_stage9_dashboard.py`.
+
+Acceptance:
+
+- є зрозумілий prepared set для matching (`list_prepared_grants` + score gate);
+- dashboard показує quality state;
+- manual review records видно окремо (existing manual review filter + needs_review tier);
+- non-grant/noise records не змішуються з якісними grants (tier filter, noise tag, окремий лічильник);
+- рішення про table/view/fields задокументоване в цьому файлі та в `grant_quality_contract.md`.
+
+### Ревізія Полів БД: Видалення Overengineered Fields
+
+Статус: реалізовано.
+
+Дата реалізації: `2026-06-10`.
+
+Мета: прибрати поля, які писались, але ніколи не читались жодним app-шляхом (overengineering), і спростити схему без втрати raw/audit даних.
+
+Видалені поля (написані, ніколи не читались):
+
+- `grants.language`;
+- `grants.opens_at`;
+- `grants.extraction_method` (повна інформація лишається в `extraction_metadata.fields[*].method` і `extraction_metadata.llm.status`);
+- `grants.cofinancing_required`, `grants.consortium_required` (булеві дублікати наявності `cofinancing_text`/`consortium_text`, які лишаються і використовуються embeddings);
+- `grants.implementation_period_text`, `grants.contact_text`;
+- `sources.requires_browser` (дублює `access_strategy`);
+- `client_profiles.source_type`, `client_profiles.source_uri` (provenance лишається в `profile_metadata`);
+- `match_runs.run_type` (константа без читачів);
+- таблиця `reports` повністю (писалась тільки тестами; `/report` page рендериться з live data) разом із `JobType.REPORT` (замінений на `JobType.QUALITY_SCORE`).
+
+Свідомо збережені поля:
+
+- всі raw snapshot поля (`raw_title`, `raw_summary`, `raw_text`, `raw_html`, `raw_payload`, `snapshot_metadata`) - raw/audit layer;
+- `profile_metadata`, `history_metadata`, `match_runs.parameters`, `match_runs.notes`, `sources.notes` - audit/provenance;
+- `geography_text`, `documents`, `funding_amount_min/max`, `cofinancing_text`, `consortium_text` - реально читаються quality contract, audit, dedup або embeddings.
+
+Migration: `migrations/versions/20260610_0005_quality_score_and_field_cleanup.py` (upgrade + повний downgrade).
+
+Документація оновлена: `docs/fields.md`, `docs/implemented_mvp.md`, `docs/operations.md`, `docs/plan/data/grant_quality_contract.md`, `CLAUDE.md`.

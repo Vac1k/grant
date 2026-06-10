@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from dataclasses import dataclass
@@ -263,11 +262,3 @@ class EmbeddingService:
                 raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
             return OpenAIEmbeddingProvider(api_key=settings.openai_api_key, model=settings.embedding_model)
         raise ValueError(f"Unsupported embedding provider: {provider_name}")
-
-    @staticmethod
-    def metadata_json(record: Grant | ClientProfile | ApplicationHistory) -> str:
-        if isinstance(record, Grant):
-            return json.dumps(record.extraction_metadata or {}, ensure_ascii=False, sort_keys=True)
-        if isinstance(record, ClientProfile):
-            return json.dumps(record.profile_metadata or {}, ensure_ascii=False, sort_keys=True)
-        return json.dumps(record.history_metadata or {}, ensure_ascii=False, sort_keys=True)

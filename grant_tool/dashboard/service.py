@@ -8,7 +8,11 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from grant_tool.db.models import ClientProfile, Grant, GrantClientMatch, JobRun, MatchRun, Report, Source
+from grant_tool.db.models import ClientProfile, Grant, GrantClientMatch, JobRun, MatchRun, Source
+
+
+PREPARED_QUALITY_TIERS = ("match_ready", "usable_with_warnings")
+QUALITY_TIER_FILTERS = ("match_ready", "usable_with_warnings", "needs_review", "noise_rejected")
 
 
 @dataclass(slots=True)
@@ -17,6 +21,10 @@ class DashboardStats:
     grants_open: int
     grants_new: int
     grants_manual_review: int
+    grants_prepared: int
+    grants_noise: int
+    grants_unscored: int
+    quality_tier_counts: dict[str, int]
     clients_total: int
     matches_total: int
     explained_matches: int
@@ -31,11 +39,16 @@ class DashboardService:
     def stats(self) -> DashboardStats:
         week_ago = datetime.now(UTC) - timedelta(days=7)
         latest_match_run = self.latest_match_run()
+        quality_tier_counts = self.quality_tier_counts()
         return DashboardStats(
             grants_total=self._count(Grant),
             grants_open=self._scalar_int(select(func.count(Grant.id)).where(Grant.status.in_(["open", "active", "upcoming"]))),
             grants_new=self._scalar_int(select(func.count(Grant.id)).where(Grant.created_at >= week_ago)),
             grants_manual_review=self._scalar_int(select(func.count(Grant.id)).where(Grant.needs_manual_review.is_(True))),
+            grants_prepared=sum(quality_tier_counts.get(tier, 0) for tier in PREPARED_QUALITY_TIERS),
+            grants_noise=quality_tier_counts.get("noise_rejected", 0),
+            grants_unscored=self._scalar_int(select(func.count(Grant.id)).where(Grant.quality_tier.is_(None))),
+            quality_tier_counts=quality_tier_counts,
             clients_total=self._scalar_int(select(func.count(ClientProfile.id)).where(ClientProfile.enabled.is_(True))),
             matches_total=self._count(GrantClientMatch),
             explained_matches=self._scalar_int(select(func.count(GrantClientMatch.id)).where(GrantClientMatch.explanation.is_not(None))),
@@ -45,6 +58,14 @@ class DashboardService:
 
     def latest_match_run(self) -> MatchRun | None:
         return self.session.scalar(select(MatchRun).order_by(MatchRun.started_at.desc()))
+
+    def quality_tier_counts(self) -> dict[str, int]:
+        query = (
+            select(Grant.quality_tier, func.count(Grant.id))
+            .where(Grant.quality_tier.is_not(None))
+            .group_by(Grant.quality_tier)
+        )
+        return {tier: count for tier, count in self.session.execute(query)}
 
     def source_options(self) -> list[Source]:
         return list(self.session.scalars(select(Source).order_by(Source.slug)))
@@ -80,6 +101,7 @@ class DashboardService:
         topic: str | None = None,
         q: str | None = None,
         manual_review: bool | None = None,
+        quality: str | None = None,
         limit: int = 100,
     ) -> list[Grant]:
         query = select(Grant).options(selectinload(Grant.source)).order_by(Grant.updated_at.desc())
@@ -87,6 +109,12 @@ class DashboardService:
             query = query.join(Source).where(Source.slug == source_slug)
         if status:
             query = query.where(Grant.status == status)
+        if quality == "prepared":
+            query = query.where(Grant.quality_tier.in_(PREPARED_QUALITY_TIERS))
+        elif quality == "unscored":
+            query = query.where(Grant.quality_tier.is_(None))
+        elif quality in QUALITY_TIER_FILTERS:
+            query = query.where(Grant.quality_tier == quality)
         if q:
             like = f"%{q.strip()}%"
             query = query.where(
@@ -154,9 +182,6 @@ class DashboardService:
                 bucket.append(match)
         return grouped
 
-    def latest_report(self) -> Report | None:
-        return self.session.scalar(select(Report).order_by(Report.generated_at.desc()))
-
     def manual_check_matches(self, *, limit: int = 20) -> list[GrantClientMatch]:
         matches = self.matches(limit=300)
         return [match for match in matches if match.manual_checks][:limit]
@@ -177,7 +202,6 @@ class DashboardService:
     def report_context(self) -> dict[str, Any]:
         return {
             "stats": self.stats(),
-            "latest_report": self.latest_report(),
             "recent_grants": self.recent_grants(limit=12),
             "top_matches_by_client": self.top_matches_by_client(limit_per_client=3),
             "manual_check_matches": self.manual_check_matches(limit=20),

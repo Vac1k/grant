@@ -46,6 +46,15 @@
         <option value="false" {{ "selected" if filters.manual_review is sameas false else "" }}>Clean</option>
       </select>
     </label>
+    <label>
+      <span>Quality</span>
+      <select name="quality">
+        <option value="">Any quality</option>
+        {% for option in ["prepared", "match_ready", "usable_with_warnings", "needs_review", "noise_rejected", "unscored"] %}
+        <option value="{{ option }}" {{ "selected" if filters.quality == option else "" }}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button type="submit">Apply</button>
   </form>
 </section>
@@ -76,6 +85,10 @@
         <dt>Confidence</dt>
         <dd>{{ "%.2f"|format(grant.extraction_confidence|float) if grant.extraction_confidence else "n/a" }}</dd>
       </div>
+      <div>
+        <dt>Quality</dt>
+        <dd>{{ grant.quality_score if grant.quality_score is not none else "n/a" }}{{ " · " ~ grant.quality_tier if grant.quality_tier else "" }}</dd>
+      </div>
     </dl>
     <div class="tag-row">
       {% for topic in grant.topics[:6] %}
@@ -83,6 +96,9 @@
       {% endfor %}
       {% if grant.needs_manual_review %}
       <span class="tag warn">manual review</span>
+      {% endif %}
+      {% if grant.quality_tier == "noise_rejected" %}
+      <span class="tag warn">noise</span>
       {% endif %}
     </div>
   </article>

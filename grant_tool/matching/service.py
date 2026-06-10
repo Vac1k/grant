@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
-from grant_tool.data_quality import GrantQualityEvaluation, GrantQualityTier, evaluate_grant_quality_contract
+from grant_tool.data_quality import (
+    DEFAULT_MIN_MATCHING_QUALITY_SCORE,
+    GrantQualityEvaluation,
+    GrantQualityTier,
+    evaluate_grant_quality_contract,
+)
 from grant_tool.db.models import ApplicationHistory, ClientProfile, Grant, MatchRun
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.embeddings import EmbeddingService
@@ -53,13 +58,14 @@ class ShortlistMatchingService:
         min_score: Decimal | float | int = Decimal("0.2500"),
         name: str | None = None,
         use_vector: bool = False,
+        include_low_quality: bool = False,
+        min_quality_score: int = DEFAULT_MIN_MATCHING_QUALITY_SCORE,
     ) -> MatchingSummary:
         min_score_decimal = self._decimal(min_score)
         clients = self._clients(client_slug=client_slug)
         grants = self.repository.list_grants_for_matching(limit=grant_limit)
         match_run = self.repository.create_match_run(
             name=name or "Stage 6 cheap shortlist",
-            run_type="stage_6_shortlist",
             status="running",
             parameters={
                 "client_slug": client_slug,
@@ -67,6 +73,8 @@ class ShortlistMatchingService:
                 "top_n": top_n,
                 "min_score": str(min_score_decimal),
                 "use_vector": use_vector,
+                "include_low_quality": include_low_quality,
+                "min_quality_score": min_quality_score,
                 "matching_version": MATCHING_VERSION,
             },
         )
@@ -80,7 +88,14 @@ class ShortlistMatchingService:
             candidates: list[MatchCandidate] = []
             for grant in grants:
                 evaluated += 1
-                candidate = self.score(grant=grant, client=client, history=history, use_vector=use_vector)
+                candidate = self.score(
+                    grant=grant,
+                    client=client,
+                    history=history,
+                    use_vector=use_vector,
+                    include_low_quality=include_low_quality,
+                    min_quality_score=min_quality_score,
+                )
                 if not candidate.hard_filter_passed:
                     filtered += 1
                     continue
@@ -140,12 +155,16 @@ class ShortlistMatchingService:
         client: ClientProfile,
         history: list[ApplicationHistory] | None = None,
         use_vector: bool = False,
+        include_low_quality: bool = False,
+        min_quality_score: int = DEFAULT_MIN_MATCHING_QUALITY_SCORE,
     ) -> MatchCandidate:
         quality_evaluation = evaluate_grant_quality_contract(grant)
         filter_passed, filter_reasons, manual_checks = self._hard_filter(
             grant=grant,
             client=client,
             quality_evaluation=quality_evaluation,
+            include_low_quality=include_low_quality,
+            min_quality_score=min_quality_score,
         )
         keyword_score, keyword_evidence = self._keyword_score(grant=grant, client=client)
         vector_score, vector_evidence = self._vector_score(grant=grant, client=client, history=history or []) if use_vector else (None, {"enabled": False})
@@ -190,6 +209,8 @@ class ShortlistMatchingService:
                     "matching_eligible": quality_evaluation.matching_eligible,
                     "matching_blockers": list(quality_evaluation.matching_blockers),
                     "source_family": quality_evaluation.source_family.value,
+                    "persisted_score": grant.quality_score,
+                    "persisted_tier": grant.quality_tier,
                 },
                 "deduplication": self._deduplication_evidence(grant),
             },
@@ -211,6 +232,8 @@ class ShortlistMatchingService:
         grant: Grant,
         client: ClientProfile,
         quality_evaluation: GrantQualityEvaluation,
+        include_low_quality: bool = False,
+        min_quality_score: int = DEFAULT_MIN_MATCHING_QUALITY_SCORE,
     ) -> tuple[bool, list[str], list[str]]:
         reasons: list[str] = []
         manual_checks: list[str] = []
@@ -233,6 +256,14 @@ class ShortlistMatchingService:
         for blocker in quality_evaluation.matching_blockers:
             if blocker not in {"closed_status"}:
                 reasons.append(f"quality_gate:{blocker}")
+
+        # Step 7 persisted score gate: low-score records need explicit opt-in.
+        if (
+            not include_low_quality
+            and grant.quality_score is not None
+            and grant.quality_score < min_quality_score
+        ):
+            reasons.append(f"quality_gate:low_quality_score:{grant.quality_score}")
 
         if grant.status == "closed":
             reasons.append("closed_grant")

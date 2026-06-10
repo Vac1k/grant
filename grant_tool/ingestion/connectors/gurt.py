@@ -92,7 +92,6 @@ class GurtConnector(BaseConnector):
             title=title,
             summary=self._summary(text),
             description_text=text,
-            language="uk",
             deadline_at=deadline_at,
             deadline_text=deadline_text,
             status=status_from_deadline(deadline_at),

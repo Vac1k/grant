@@ -9,7 +9,6 @@ from grant_tool.db.models import (
     JobType,
     MatchRun,
     RawGrantSnapshot,
-    Report,
     Source,
 )
 
@@ -24,6 +23,5 @@ __all__ = [
     "JobType",
     "MatchRun",
     "RawGrantSnapshot",
-    "Report",
     "Source",
 ]

@@ -46,7 +46,6 @@ class WordPressGrantConnector(BaseConnector):
         "підтримка",
         "можливості",
     )
-    language: ClassVar[str | None] = None
     default_quality_level: ClassVar[str] = "medium"
     default_quality_reasons: ClassVar[tuple[str, ...]] = ()
     requires_manual_review_by_default: ClassVar[bool] = False
@@ -177,7 +176,6 @@ class WordPressGrantConnector(BaseConnector):
             title=title,
             summary=item.summary_hint or self._summary(text),
             description_text=text or None,
-            language=self.language,
             published_at=item.published_at_hint,
             deadline_at=deadline_at,
             deadline_text=deadline_text or item.deadline_hint,
@@ -192,7 +190,6 @@ class WordPressGrantConnector(BaseConnector):
                 "quality_level": item.discovery_metadata.get("quality_level"),
                 "quality_reasons": item.discovery_metadata.get("quality_reasons", []),
             },
-            extraction_method="deterministic",
             needs_manual_review=bool(item.discovery_metadata.get("requires_manual_review", False)),
             manual_review_reason=item.discovery_metadata.get("manual_review_reason"),
         )
@@ -371,7 +368,6 @@ class WordPressGrantConnector(BaseConnector):
 class ChasZminConnector(WordPressGrantConnector):
     source_slug = "chas-zmin"
     search_terms = ("грант", "конкурс", "можливості")
-    language = "uk"
     default_quality_level = "high"
 
 
@@ -379,7 +375,6 @@ class EUFundingPortalEuConnector(WordPressGrantConnector):
     source_slug = "eufundingportal-eu"
     search_terms = ("grant", "funding", "programme")
     grant_keywords = WordPressGrantConnector.grant_keywords + ("programme", "european", "eu")
-    language = "en"
     default_quality_level = "medium"
     default_quality_reasons = ("aggregator_or_broad_source", "duplicate_risk_with_official_eu_source")
     requires_manual_review_by_default = True
@@ -389,7 +384,6 @@ class EUFundingPortalEuConnector(WordPressGrantConnector):
 class HromadyConnector(WordPressGrantConnector):
     source_slug = "hromady"
     search_terms = ("грант", "конкурс", "підтримка громад", "можливості")
-    language = "uk"
     default_quality_level = "medium"
     default_quality_reasons = ("local_development_source",)
 
@@ -397,7 +391,6 @@ class HromadyConnector(WordPressGrantConnector):
 class NipoConnector(WordPressGrantConnector):
     source_slug = "nipo"
     search_terms = ("грант", "конкурс", "можливості", "підтримка")
-    language = "uk"
     default_quality_level = "medium"
     default_quality_reasons = ("digest_or_news_source",)
     requires_manual_review_by_default = True
@@ -408,7 +401,6 @@ class FundsForNgosConnector(WordPressGrantConnector):
     source_slug = "fundsforngos"
     search_terms = ("grant", "funding", "call for proposals")
     grant_keywords = WordPressGrantConnector.grant_keywords + ("proposal", "proposals", "ngo", "ngos")
-    language = "en"
     default_quality_level = "medium"
     default_quality_reasons = ("broad_international_source", "country_topic_filter_required")
     requires_manual_review_by_default = True
@@ -419,7 +411,6 @@ class OpportunityDeskConnector(WordPressGrantConnector):
     source_slug = "opportunitydesk"
     search_terms = ("grant", "funding", "call for proposals")
     grant_keywords = WordPressGrantConnector.grant_keywords + ("proposal", "proposals", "award", "awards")
-    language = "en"
     default_quality_level = "medium"
     default_quality_reasons = ("broad_opportunity_source", "awards_and_grants_category_filter")
     requires_manual_review_by_default = True

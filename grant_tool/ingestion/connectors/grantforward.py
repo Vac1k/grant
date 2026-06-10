@@ -133,7 +133,6 @@ class GrantForwardConnector(BaseConnector):
             title=item.title_hint or "Untitled GrantForward opportunity",
             summary=item.summary_hint,
             description_text=description_text,
-            language="en",
             deadline_at=deadline_at,
             deadline_text=item.deadline_hint,
             status=status_from_deadline(deadline_at),
@@ -149,7 +148,6 @@ class GrantForwardConnector(BaseConnector):
                 "detail_requires_login": True,
                 "sponsors": sponsors,
             },
-            extraction_method="deterministic",
             needs_manual_review=True,
             manual_review_reason=item.discovery_metadata.get("manual_review_reason"),
         )

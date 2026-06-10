@@ -6,6 +6,8 @@ from pathlib import Path
 
 from grant_tool.client_import import ImportResult, import_application_history, import_client_profiles
 from grant_tool.config import get_settings
+from grant_tool.data_quality import DEFAULT_MIN_MATCHING_QUALITY_SCORE
+from grant_tool.data_quality.service import QualityScoringService, QualityScoringSummary
 from grant_tool.db.repositories import DataAuditSourceRow, GrantRepository, SearchQualityGateRow, SearchSourceReportRow
 from grant_tool.db.session import SessionLocal
 from grant_tool.deduplication import DeduplicationSummary, GrantDeduplicationService
@@ -382,6 +384,46 @@ def _cmd_deduplicate(args: argparse.Namespace) -> None:
         print(line)
 
 
+def _format_quality_score_summary(summary: QualityScoringSummary) -> list[str]:
+    tier_text = " ".join(f"{tier}={count}" for tier, count in sorted(summary.tier_counts.items())) or "-"
+    lines = [
+        (
+            "Quality score: "
+            f"processed={summary.processed_count} "
+            f"avg={summary.average_score} "
+            f"low_score(<{summary.min_matching_quality_score})={summary.low_score_count} "
+            f"matching_ready={summary.matching_ready_count} "
+            f"dry_run={'yes' if summary.dry_run else 'no'} "
+            f"job={summary.job.id}"
+        ),
+        f"tiers: {tier_text}",
+    ]
+    for row in summary.rows:
+        row_tiers = " ".join(f"{tier}={count}" for tier, count in sorted(row.tier_counts.items()))
+        lines.append(
+            f"  - {row.source_slug}: grants={row.grants_total} avg={row.average_score} "
+            f"low_score={row.low_score_count} matching_ready={row.matching_ready_count} | {row_tiers}"
+        )
+    return lines
+
+
+def _cmd_quality_score(args: argparse.Namespace) -> None:
+    with SessionLocal() as session:
+        repository = GrantRepository(session)
+        service = QualityScoringService(repository=repository)
+        summary = service.run(
+            source_slug=args.source,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            min_matching_quality_score=args.min_score,
+        )
+        if not args.dry_run:
+            session.commit()
+
+    for line in _format_quality_score_summary(summary):
+        print(line)
+
+
 def _cmd_match(args: argparse.Namespace) -> None:
     with SessionLocal() as session:
         repository = GrantRepository(session)
@@ -393,6 +435,8 @@ def _cmd_match(args: argparse.Namespace) -> None:
             min_score=args.min_score,
             name=args.name,
             use_vector=args.use_vector,
+            include_low_quality=args.include_low_quality,
+            min_quality_score=args.min_quality_score,
         )
         session.commit()
 
@@ -536,6 +580,21 @@ def _build_parser() -> argparse.ArgumentParser:
     deduplicate.add_argument("--dry-run", action="store_true", help="Compute candidates without writing metadata")
     deduplicate.set_defaults(func=_cmd_deduplicate)
 
+    quality_score = subparsers.add_parser(
+        "quality-score",
+        help="Compute and persist Step 7 quality score, tier, and flags for stored grants",
+    )
+    quality_score.add_argument("--source", choices=sorted(CONNECTOR_CLASSES), default=None)
+    quality_score.add_argument("--limit", type=int, default=None)
+    quality_score.add_argument(
+        "--min-score",
+        type=int,
+        default=DEFAULT_MIN_MATCHING_QUALITY_SCORE,
+        help="Threshold used to report low-score records and matching readiness",
+    )
+    quality_score.add_argument("--dry-run", action="store_true", help="Report scores without persisting them")
+    quality_score.set_defaults(func=_cmd_quality_score)
+
     match = subparsers.add_parser(
         "match",
         help="Run Stage 6 cheap filtering and shortlist matching",
@@ -546,6 +605,17 @@ def _build_parser() -> argparse.ArgumentParser:
     match.add_argument("--min-score", type=float, default=0.25, help="Minimum shortlist score")
     match.add_argument("--name", default=None, help="Optional match run name")
     match.add_argument("--use-vector", action="store_true", help="Use Stage 7 vector similarity when embeddings exist")
+    match.add_argument(
+        "--include-low-quality",
+        action="store_true",
+        help="Explicitly allow records below the persisted quality score threshold into matching",
+    )
+    match.add_argument(
+        "--min-quality-score",
+        type=int,
+        default=DEFAULT_MIN_MATCHING_QUALITY_SCORE,
+        help="Persisted quality score required for matching unless --include-low-quality is set",
+    )
     match.set_defaults(func=_cmd_match)
 
     embed = subparsers.add_parser(

@@ -129,7 +129,6 @@ grant-tool seed-sources
 - `feed_url`;
 - `sitemap_url`;
 - `access_strategy`;
-- `requires_browser`;
 - `enabled`;
 - `rate_limit_seconds`;
 - `notes`;
@@ -187,10 +186,8 @@ grant-tool seed-sources
 - `title`;
 - `summary`;
 - `description_text`;
-- `language`;
 - `status`;
 - `published_at`;
-- `opens_at`;
 - `deadline_at`;
 - `deadline_text`;
 - `program_name`;
@@ -209,15 +206,10 @@ grant-tool seed-sources
 - `topics`;
 - `keywords`;
 - `restrictions_text`;
-- `cofinancing_required`;
 - `cofinancing_text`;
-- `consortium_required`;
 - `consortium_text`;
-- `implementation_period_text`;
-- `contact_text`;
 - `documents`;
 - `source_metadata`;
-- `extraction_method`;
 - `extraction_confidence`;
 - `extraction_metadata`;
 - `needs_manual_review`;
@@ -483,8 +475,6 @@ grant-tool import-application-history --file data/manual_seed/application_histor
 - `target_topics`;
 - `excluded_topics`;
 - `previous_submissions_summary`;
-- `source_type`;
-- `source_uri`;
 - `profile_metadata`;
 - `enabled`.
 

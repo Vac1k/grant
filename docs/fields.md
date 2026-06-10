@@ -17,7 +17,6 @@
 - `feed_url`
 - `sitemap_url`
 - `access_strategy`
-- `requires_browser`
 - `enabled`
 - `rate_limit_seconds`
 - `notes`
@@ -161,10 +160,8 @@ Fields:
 - `title`
 - `summary`
 - `description_text`
-- `language`
 - `status`
 - `published_at`
-- `opens_at`
 - `deadline_at`
 - `deadline_text`
 - `program_name`
@@ -183,19 +180,17 @@ Fields:
 - `topics`
 - `keywords`
 - `restrictions_text`
-- `cofinancing_required`
 - `cofinancing_text`
-- `consortium_required`
 - `consortium_text`
-- `implementation_period_text`
-- `contact_text`
 - `documents`
 - `source_metadata`
-- `extraction_method`
 - `extraction_confidence`
 - `extraction_metadata`
 - `needs_manual_review`
 - `manual_review_reason`
+- `quality_score`
+- `quality_tier`
+- `quality_flags`
 - `embedding`
 - `embedding_text`
 - `embedding_model`
@@ -218,10 +213,17 @@ JSON/list fields:
 - `documents`
 - `source_metadata`
 - `extraction_metadata`
+- `quality_flags`
 
 Vector field:
 
 - `embedding`: 1536 dimensions
+
+Quality fields (Data Preparation Step 7):
+
+- `quality_score`: deterministic 0-100 score
+- `quality_tier`: `match_ready`, `usable_with_warnings`, `needs_review`, `noise_rejected`
+- `quality_flags`: explainable quality flag values
 
 Constraints/indexes:
 
@@ -229,6 +231,8 @@ Constraints/indexes:
 - unique: `source_id`, `source_record_id`
 - index: `deadline_at`
 - index: `status`
+- index: `quality_tier`
+- index: `quality_score`
 
 ## Client Profiles
 
@@ -250,8 +254,6 @@ Fields:
 - `target_topics`
 - `excluded_topics`
 - `previous_submissions_summary`
-- `source_type`
-- `source_uri`
 - `profile_metadata`
 - `enabled`
 - `embedding`
@@ -263,7 +265,6 @@ Required fields:
 
 - `name`
 - `slug`
-- `source_type`
 - `enabled`
 
 JSON/list fields:
@@ -364,7 +365,7 @@ Enum values for `job_type`:
 - `matching`
 - `llm_extraction`
 - `embedding`
-- `report`
+- `quality_score`
 - `seed_sources`
 
 Enum values for `status`:
@@ -394,7 +395,6 @@ Fields:
 - `created_at`
 - `updated_at`
 - `name`
-- `run_type`
 - `status`
 - `parameters`
 - `started_at`
@@ -403,7 +403,6 @@ Fields:
 
 Required fields:
 
-- `run_type`
 - `status`
 - `parameters`
 - `started_at`
@@ -462,36 +461,6 @@ Constraints/indexes:
 - unique: `match_run_id`, `grant_id`, `client_profile_id`
 - index: `score`
 
-## Reports
-
-Table: `reports`
-
-Fields:
-
-- `id`
-- `created_at`
-- `updated_at`
-- `match_run_id`
-- `title`
-- `report_type`
-- `format`
-- `summary`
-- `content`
-- `generated_at`
-- `report_metadata`
-
-Required fields:
-
-- `title`
-- `report_type`
-- `format`
-- `content`
-- `generated_at`
-
-JSON fields:
-
-- `report_metadata`
-
 ## NormalizedGrantDraft
 
 Python dataclass: `NormalizedGrantDraft`
@@ -505,9 +474,7 @@ Fields:
 - `application_url`
 - `summary`
 - `description_text`
-- `language`
 - `published_at`
-- `opens_at`
 - `deadline_at`
 - `deadline_text`
 - `program_name`
@@ -526,15 +493,10 @@ Fields:
 - `topics`
 - `keywords`
 - `restrictions_text`
-- `cofinancing_required`
 - `cofinancing_text`
-- `consortium_required`
 - `consortium_text`
-- `implementation_period_text`
-- `contact_text`
 - `documents`
 - `source_metadata`
-- `extraction_method`
 - `extraction_confidence`
 - `extraction_metadata`
 - `needs_manual_review`

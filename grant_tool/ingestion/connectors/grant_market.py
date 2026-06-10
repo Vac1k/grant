@@ -92,7 +92,6 @@ class GrantMarketConnector(BaseConnector):
             title=title,
             summary=summary or self._summary(text),
             description_text=text or None,
-            language="uk",
             published_at=published_at,
             deadline_at=deadline_at,
             deadline_text=deadline_text or item.deadline_hint,
@@ -107,7 +106,6 @@ class GrantMarketConnector(BaseConnector):
                 "quality_level": item.discovery_metadata.get("quality_level"),
                 "quality_reasons": item.discovery_metadata.get("quality_reasons", []),
             },
-            extraction_method="deterministic",
         )
 
     @staticmethod

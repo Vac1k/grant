@@ -26,6 +26,13 @@ from grant_tool.data_quality.normalization import (
     normalize_grant_draft,
     normalize_support_type,
 )
+from grant_tool.data_quality.scoring import (
+    DEFAULT_MIN_MATCHING_QUALITY_SCORE,
+    QUALITY_SCORING_VERSION,
+    GrantQualityScore,
+    apply_grant_quality_score,
+    compute_grant_quality_score,
+)
 
 __all__ = [
     "ADVANCED_ENRICHMENT_FIELDS",
@@ -47,7 +54,12 @@ __all__ = [
     "SourceFamily",
     "NORMALIZATION_RULE_VERSION",
     "NormalizationResult",
+    "DEFAULT_MIN_MATCHING_QUALITY_SCORE",
+    "QUALITY_SCORING_VERSION",
+    "GrantQualityScore",
+    "apply_grant_quality_score",
     "clean_funding_amount_text",
+    "compute_grant_quality_score",
     "evaluate_grant_quality_contract",
     "normalize_currency",
     "normalize_grant_draft",

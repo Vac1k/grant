@@ -45,7 +45,7 @@ class JobType(StrEnum):
     MATCHING = "matching"
     LLM_EXTRACTION = "llm_extraction"
     EMBEDDING = "embedding"
-    REPORT = "report"
+    QUALITY_SCORE = "quality_score"
     SEED_SOURCES = "seed_sources"
 
 
@@ -94,7 +94,6 @@ class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         default=AccessStrategy.HTML.value,
     )
-    requires_browser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     rate_limit_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     notes: Mapped[str | None] = mapped_column(Text)
@@ -248,6 +247,8 @@ class Grant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("source_id", "source_record_id", name="uq_grants_source_record_id"),
         Index("ix_grants_deadline_at", "deadline_at"),
         Index("ix_grants_status", "status"),
+        Index("ix_grants_quality_tier", "quality_tier"),
+        Index("ix_grants_quality_score", "quality_score"),
     )
 
     source_id: Mapped[uuid.UUID] = mapped_column(
@@ -266,10 +267,8 @@ class Grant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
     description_text: Mapped[str | None] = mapped_column(Text)
-    language: Mapped[str | None] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deadline_text: Mapped[str | None] = mapped_column(Text)
     program_name: Mapped[str | None] = mapped_column(Text)
@@ -288,19 +287,17 @@ class Grant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     topics: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     keywords: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     restrictions_text: Mapped[str | None] = mapped_column(Text)
-    cofinancing_required: Mapped[bool | None] = mapped_column(Boolean)
     cofinancing_text: Mapped[str | None] = mapped_column(Text)
-    consortium_required: Mapped[bool | None] = mapped_column(Boolean)
     consortium_text: Mapped[str | None] = mapped_column(Text)
-    implementation_period_text: Mapped[str | None] = mapped_column(Text)
-    contact_text: Mapped[str | None] = mapped_column(Text)
     documents: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    extraction_method: Mapped[str | None] = mapped_column(String(50))
     extraction_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     extraction_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     needs_manual_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     manual_review_reason: Mapped[str | None] = mapped_column(Text)
+    quality_score: Mapped[int | None] = mapped_column(Integer)
+    quality_tier: Mapped[str | None] = mapped_column(String(50))
+    quality_flags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     embedding_text: Mapped[str | None] = mapped_column(Text)
     embedding_model: Mapped[str | None] = mapped_column(String(100))
@@ -326,8 +323,6 @@ class ClientProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     target_topics: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     excluded_topics: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     previous_submissions_summary: Mapped[str | None] = mapped_column(Text)
-    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
-    source_uri: Mapped[str | None] = mapped_column(Text)
     profile_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
@@ -387,7 +382,6 @@ class MatchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (Index("ix_match_runs_status", "status"),)
 
     name: Mapped[str | None] = mapped_column(String(255))
-    run_type: Mapped[str] = mapped_column(String(50), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime] = mapped_column(
@@ -402,7 +396,6 @@ class MatchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="match_run",
         cascade="all, delete-orphan",
     )
-    reports: Mapped[list[Report]] = relationship(back_populates="match_run")
 
 
 class GrantClientMatch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -452,26 +445,3 @@ class GrantClientMatch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     match_run: Mapped[MatchRun] = relationship(back_populates="matches")
     grant: Mapped[Grant] = relationship(back_populates="matches")
     client_profile: Mapped[ClientProfile] = relationship(back_populates="matches")
-
-
-class Report(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "reports"
-
-    match_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True),
-        ForeignKey("match_runs.id", ondelete="SET NULL"),
-        index=True,
-    )
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    report_type: Mapped[str] = mapped_column(String(50), nullable=False, default="daily")
-    format: Mapped[str] = mapped_column(String(50), nullable=False, default="markdown")
-    summary: Mapped[str | None] = mapped_column(Text)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    generated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    report_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
-    match_run: Mapped[MatchRun | None] = relationship(back_populates="reports")

@@ -61,8 +61,8 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertIn("AI", draft.topics)
         self.assertIn("innovation", draft.topics)
         self.assertIn("Ukraine", draft.countries)
-        self.assertTrue(draft.consortium_required)
-        self.assertTrue(draft.cofinancing_required)
+        self.assertTrue(draft.consortium_text)
+        self.assertTrue(draft.cofinancing_text)
         self.assertIn("feature_card", draft.extraction_metadata)
         self.assertGreaterEqual(draft.extraction_confidence, 0)
 
@@ -391,7 +391,7 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         self.assertIn("humanitarian", grant.topics)
         self.assertEqual(grant.currency, "USD")
 
-    def test_llm_success_sets_extraction_method_and_metadata(self) -> None:
+    def test_llm_success_sets_llm_metadata(self) -> None:
         class FakeLlmClient:
             def extract(self, *, draft: NormalizedGrantDraft, text: str) -> dict:
                 return {
@@ -413,7 +413,6 @@ class Stage5ExtractionTestCase(unittest.TestCase):
 
         FeatureExtractionService(use_llm=True, llm_client=FakeLlmClient()).enrich_draft(draft, source_slug="example")
 
-        self.assertEqual(draft.extraction_method, "deterministic_llm")
         self.assertEqual(draft.extraction_metadata["llm"]["status"], "success")
         self.assertEqual(draft.extraction_metadata["llm"]["version"], "data-preparation-step6-v1")
         self.assertIn("missing_applicant_types", draft.extraction_metadata["llm"]["fallback_reasons"])
@@ -451,7 +450,6 @@ class Stage5ExtractionTestCase(unittest.TestCase):
         FeatureExtractionService(use_llm=True, llm_client=client).enrich_draft(draft, source_slug="example")
 
         self.assertEqual(client.calls, 0)
-        self.assertEqual(draft.extraction_method, "deterministic")
         self.assertEqual(draft.extraction_metadata["llm"]["status"], "skipped")
         self.assertEqual(draft.extraction_metadata["llm"]["reason"], "deterministic extraction sufficient")
 
@@ -537,15 +535,15 @@ class Stage5ExtractionTestCase(unittest.TestCase):
     def test_deadline_parser_ignores_publication_date_and_reads_ukrainian_month(self) -> None:
         text = (
             "ГУРТ шукає партнерів для створення осередків самодопомоги 20.05.2026. "
-            "Оцінювання ЗАЯВКИ, яку треба заповнити до 04 червня 2026. "
-            "Навчання менеджера осередку 19-20 червня 2026."
+            "Оцінювання ЗАЯВКИ, яку треба заповнити до 04 червня 2030. "
+            "Навчання менеджера осередку 19-20 червня 2030."
         )
 
         deadline_at, deadline_text = extract_deadline(text)
 
         self.assertIsNotNone(deadline_at)
-        self.assertEqual(deadline_at.date().isoformat(), "2026-06-04")
-        self.assertIn("заповнити до 04 червня 2026", deadline_text)
+        self.assertEqual(deadline_at.date().isoformat(), "2030-06-04")
+        self.assertIn("заповнити до 04 червня 2030", deadline_text)
         self.assertEqual(status_from_deadline(deadline_at), "open")
 
     def test_deadline_parser_reads_two_digit_year_and_not_later_phrase(self) -> None:

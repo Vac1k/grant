@@ -221,7 +221,6 @@ class DiiaBusinessConnector(BaseConnector):
             title=title,
             summary=description or self._summary(text),
             description_text=text,
-            language="uk",
             deadline_at=deadline_at,
             deadline_text=parsed_deadline_text,
             status=status,
@@ -236,7 +235,6 @@ class DiiaBusinessConnector(BaseConnector):
             regions=[geography_text] if geography_text else [],
             eligibility_text=self._attribute_value(attributes, "umoviuchasti", "Умови участі"),
             topics=[category_title] if category_title else [],
-            implementation_period_text=deadline_text,
             source_metadata={
                 "detail_url": source_url,
                 "api_kind": "diia_business_finance_service",
@@ -276,7 +274,6 @@ class DiiaBusinessConnector(BaseConnector):
             title=title,
             summary=self._summary(text),
             description_text=text,
-            language="uk",
             deadline_at=deadline_at,
             deadline_text=deadline_text,
             status=status_from_deadline(deadline_at),

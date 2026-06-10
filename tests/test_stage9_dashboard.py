@@ -104,11 +104,6 @@ class Stage9DashboardTestCase(unittest.TestCase):
             risks_text="Verify eligible costs.",
             manual_checks=["verify deadline"],
         )
-        self.repository.save_report(
-            title="Daily dashboard report",
-            content="# Daily dashboard report\n\nAI innovation grant looks relevant.",
-            match_run_id=match_run.id,
-        )
 
     def test_stage9_dashboard_service_builds_stats(self) -> None:
         stats = DashboardService(self.session).stats()
@@ -118,6 +113,18 @@ class Stage9DashboardTestCase(unittest.TestCase):
         self.assertEqual(stats.clients_total, 1)
         self.assertEqual(stats.matches_total, 1)
         self.assertEqual(stats.explained_matches, 1)
+        self.assertEqual(stats.grants_unscored, 1)
+        self.assertEqual(stats.grants_prepared, 0)
+        self.assertEqual(stats.quality_tier_counts, {})
+
+    def test_stage9_grants_quality_filter_separates_unscored_records(self) -> None:
+        unscored = self.client.get("/grants?quality=unscored")
+        prepared = self.client.get("/grants?quality=prepared")
+
+        self.assertEqual(unscored.status_code, 200)
+        self.assertIn("AI innovation grant", unscored.text)
+        self.assertEqual(prepared.status_code, 200)
+        self.assertNotIn("AI innovation grant", prepared.text)
 
     def test_stage9_dashboard_pages_render_core_data(self) -> None:
         paths = ["/", "/grants", "/clients", "/matches", "/report"]
@@ -131,7 +138,7 @@ class Stage9DashboardTestCase(unittest.TestCase):
         self.assertIn("AI innovation grant", self.client.get("/grants").text)
         self.assertIn("AI Client", self.client.get("/clients").text)
         self.assertIn("Strong AI and SME fit", self.client.get("/matches").text)
-        self.assertIn("Daily dashboard report", self.client.get("/report").text)
+        self.assertIn("Top matches by client", self.client.get("/report").text)
 
     def test_stage9_grants_filters_are_rendered(self) -> None:
         response = self.client.get("/grants?source=test-source&status=open&topic=AI")

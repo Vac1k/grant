@@ -8,7 +8,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from typing import Any
 
-from grant_tool.data_quality import GrantQualityTier, SourceFamily, evaluate_grant_quality_contract
+from grant_tool.data_quality import (
+    GrantQualityTier,
+    SourceFamily,
+    apply_grant_quality_score,
+    evaluate_grant_quality_contract,
+)
 from grant_tool.db.models import Grant
 from grant_tool.db.repositories import GrantRepository
 from grant_tool.ingestion.utils import canonicalize_url, clean_text
@@ -76,6 +81,9 @@ class GrantDeduplicationService:
 
         if not dry_run:
             self._write_deduplication_metadata(grants, candidates, groups, grant_by_id=grant_by_id)
+            # Duplicate flags feed the persisted Step 7 quality score, so refresh it.
+            for grant in grants:
+                apply_grant_quality_score(grant)
             self.repository.session.flush()
 
         duplicate_primary_ids = {group.primary_grant_id for group in groups}

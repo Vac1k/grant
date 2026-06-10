@@ -310,10 +310,10 @@ docker compose exec app grant-tool extract-features --limit 100 --use-llm
 
 `--use-llm` only works when `OPENAI_API_KEY` is configured. Without it, the app uses deterministic parsing only.
 
-Check extraction methods:
+Check persisted quality tiers:
 
 ```bash
-docker compose exec db psql -U grant -d grant -c "select extraction_method, count(*) from grants group by extraction_method order by extraction_method;"
+docker compose exec db psql -U grant -d grant -c "select quality_tier, count(*) from grants group by quality_tier order by count(*) desc;"
 ```
 
 Check manual review volume:

@@ -49,7 +49,7 @@
   <text x="100" y="453" class="text">`HTTP_USER_AGENT` і `rate_limit_seconds` беруться з config/source.</text>
   <text x="100" y="487" class="label">Source config fields</text>
   <text x="100" y="513" class="mono">slug, name, base_url, list_url, api_url, feed_url, sitemap_url</text>
-  <text x="100" y="536" class="mono">access_strategy, requires_browser, enabled, rate_limit_seconds</text>
+  <text x="100" y="536" class="mono">access_strategy, enabled, rate_limit_seconds</text>
   <text x="100" y="559" class="mono">notes, source_metadata</text>
 
   <rect x="770" y="255" width="660" height="315" class="panel panel-blue"/>

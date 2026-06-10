@@ -167,79 +167,6 @@ Step 4 normalization rules
 - після Step 5 треба знову запустити audit і подивитися, які fields або source-specific patterns ще потребують normalization;
 - manual review UI/workflow логічно належить до Step 8 або окремого post-data production readiness stage.
 
-## Step 7: Quality Score
-
-Мета: додати вимірювану якість кожного grant record.
-
-Потрібно додати або підготувати:
-
-```text
-quality_score: 0-100
-quality_flags:
-  - missing_deadline
-  - missing_amount
-  - missing_funder
-  - missing_country
-  - missing_region
-  - missing_eligibility
-  - missing_application_url
-  - missing_published_at
-  - broad_finance_program
-  - possible_digest
-  - possible_news
-  - possible_event
-  - possible_webinar
-  - possible_training
-  - possible_duplicate
-  - needs_manual_review
-  - noise_rejected
-```
-
-Score має враховувати:
-
-- заповненість core fields;
-- заповненість important optional fields;
-- відсутність advanced fields тільки як слабкий сигнал, а не як причина reject;
-- тип джерела;
-- classification;
-- duplicate risk;
-- manual review;
-- наявність deadline;
-- наявність summary/full text;
-- чи record придатний для matching.
-
-Acceptance:
-
-- score deterministic;
-- flags explainable;
-- є CLI або report для перегляду score;
-- records з низьким score не використовуються в matching без явного дозволу.
-
-## Step 8: Prepared Grants Layer
-
-Мета: створити зручний шар даних для matching, scoring, dashboard і AI-рекомендацій.
-
-Варіанти реалізації:
-
-- додаткові поля в `grants`;
-- окрема таблиця `prepared_grants`;
-- materialized view;
-- regular SQL view.
-
-Початкова рекомендація:
-
-- не створювати окрему таблицю одразу;
-- спочатку додати audit, quality contract, noise/matching gate, normalization, flags і score;
-- після цього вирішити, чи потрібна `prepared_grants`.
-
-Acceptance:
-
-- є зрозумілий prepared set для matching;
-- dashboard може показувати quality state;
-- manual review records видно окремо;
-- non-grant/noise records не змішуються з якісними grants;
-- рішення про table/view/fields задокументоване.
-
 ## Коли Етап Data Preparation Може Бути Завершений
 
 Етап можна вважати завершеним тільки тоді, коли:
@@ -257,15 +184,12 @@ Acceptance:
 
 ## Поточний Plan State
 
-Step 1, Step 2, Step 3, Step 4, Step 5 і Step 6 виконані та перенесені у `implemented_for_data.md`.
+Step 1, Step 2, Step 3, Step 4, Step 5, Step 6, Step 7 і Step 8 виконані та перенесені у `implemented_for_data.md`.
 
-Відкриті steps:
+Відкритих steps немає. Етап Data Preparation закритий разом із ревізією полів БД (видалення overengineered fields і таблиці `reports`).
 
-- Step 7: Quality Score;
-- Step 8: Prepared Grants Layer.
+Дата закриття етапу: `2026-06-10`.
 
-Перший рекомендований prompt для реалізації:
+Наступний етап спланований окремо:
 
-```text
-implement step 7 for data preparation
-```
+- `docs/plan/data-audit/plan_for_data_audit.md` - manual review workflow і періодичний data audit.

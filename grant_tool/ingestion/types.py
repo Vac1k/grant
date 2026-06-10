@@ -61,9 +61,7 @@ class NormalizedGrantDraft:
     application_url: str | None = None
     summary: str | None = None
     description_text: str | None = None
-    language: str | None = None
     published_at: datetime | None = None
-    opens_at: datetime | None = None
     deadline_at: datetime | None = None
     deadline_text: str | None = None
     program_name: str | None = None
@@ -82,15 +80,10 @@ class NormalizedGrantDraft:
     topics: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     restrictions_text: str | None = None
-    cofinancing_required: bool | None = None
     cofinancing_text: str | None = None
-    consortium_required: bool | None = None
     consortium_text: str | None = None
-    implementation_period_text: str | None = None
-    contact_text: str | None = None
     documents: list[dict[str, Any]] = field(default_factory=list)
     source_metadata: dict[str, Any] = field(default_factory=dict)
-    extraction_method: str = "deterministic"
     extraction_confidence: Decimal | None = None
     extraction_metadata: dict[str, Any] = field(default_factory=dict)
     needs_manual_review: bool = False
@@ -101,9 +94,7 @@ class NormalizedGrantDraft:
             "application_url": self.application_url,
             "summary": self.summary,
             "description_text": self.description_text,
-            "language": self.language,
             "published_at": self.published_at,
-            "opens_at": self.opens_at,
             "deadline_at": self.deadline_at,
             "deadline_text": self.deadline_text,
             "program_name": self.program_name,
@@ -122,15 +113,10 @@ class NormalizedGrantDraft:
             "topics": self.topics,
             "keywords": self.keywords,
             "restrictions_text": self.restrictions_text,
-            "cofinancing_required": self.cofinancing_required,
             "cofinancing_text": self.cofinancing_text,
-            "consortium_required": self.consortium_required,
             "consortium_text": self.consortium_text,
-            "implementation_period_text": self.implementation_period_text,
-            "contact_text": self.contact_text,
             "documents": self.documents,
             "source_metadata": self.source_metadata,
-            "extraction_method": self.extraction_method,
             "extraction_confidence": self.extraction_confidence,
             "extraction_metadata": self.extraction_metadata,
             "needs_manual_review": self.needs_manual_review,

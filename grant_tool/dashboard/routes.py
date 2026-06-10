@@ -56,6 +56,7 @@ def grants(
     topic: str | None = Query(default=None),
     q: str | None = Query(default=None),
     manual_review: bool | None = Query(default=None),
+    quality: str | None = Query(default=None),
     dashboard: DashboardService = Depends(get_dashboard),
 ) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -70,6 +71,7 @@ def grants(
                 topic=topic,
                 q=q,
                 manual_review=manual_review,
+                quality=quality,
                 limit=120,
             ),
             "sources": dashboard.source_options(),
@@ -80,6 +82,7 @@ def grants(
                 "topic": topic,
                 "q": q,
                 "manual_review": manual_review,
+                "quality": quality,
             },
         },
     )

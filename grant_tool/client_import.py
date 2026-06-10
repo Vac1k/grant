@@ -131,8 +131,6 @@ def import_client_profiles(repository: GrantRepository, path: str | Path) -> Imp
             risks=empty_to_none(row.get("risks")),
             target_topics=split_list(row.get("target_topics")),
             excluded_topics=split_list(row.get("excluded_topics")),
-            source_type="manual_seed",
-            source_uri=str(csv_path),
             profile_metadata=metadata,
             enabled=True,
         )
